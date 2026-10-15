@@ -1,1894 +1,1717 @@
-﻿# PCToolkit.ps1 - BY IRREBOY
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing
+#Requires -Version 5.1
+# PCToolkit.ps1  — BY IRREBOY
+# Full rewrite: 8 tabs, mode profiles, hardware panel, process manager, network panel, history log
 
-$ScriptsDir = "C:\Users\jdpbe\Scripts"
-$script:IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 
-$script:_Job         = $null
-$script:_Timer       = $null
-$script:_PrintTimer  = $null
-$script:_PrintQueue  = [System.Collections.Concurrent.ConcurrentQueue[hashtable]]::new()
-$script:_StreamFile  = ""
-$script:_LastLineIdx = 0
-$script:_OkCount     = 0
-$script:_WarnCount   = 0
-$script:_CritCount   = 0
-$script:_StartTime   = $null
-$script:_SysJob      = $null
-$script:_SysTimer    = $null
-$script:ActiveTab    = "Security"
-$script:LastAlerts   = @()
-$script:LastLogFile  = ""
-$script:_MonJob      = $null
-$script:_MonTimer    = $null
-$script:_MonStream   = ""
-$script:_MonData     = @{}
-$script:_Tray        = $null
-$script:_TrayExit    = $false
-$script:_CpuHistory  = [System.Collections.Generic.List[int]]::new()
-$script:_GpuHistory  = [System.Collections.Generic.List[int]]::new()
+$ScriptsDir = Split-Path $MyInvocation.MyCommand.Path -Parent
+
+# ─── State ────────────────────────────────────────────────────────────────────
+$script:_ActiveTab    = "Security"
+$script:_ActiveMode   = "Normal"
+$script:_Job          = $null
+$script:_JobStream    = $null
+$script:_CpuHistory   = [System.Collections.Generic.List[double]]::new()
+$script:_GpuHistory   = [System.Collections.Generic.List[double]]::new()
 $script:_HealthSecCrit = 0
 $script:_HealthSecWarn = 0
+$script:_PrintQueue   = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+$script:_HistoryLog   = [System.Collections.Generic.List[hashtable]]::new()
+$script:_GpuCounter   = $null
+$script:_DiskReadCtr  = $null
+$script:_DiskWriteCtr = $null
+$script:_NetDlCtr     = $null
+$script:_NetUlCtr     = $null
 
-$script:AsciiSkull = @(
-    "⠀⠀⠀⠲⣦⣤⣀⣀⠀⠀⠀⣀⣀⣠⣤⣀⣀⠀⢀⣀⣠⣤⣶⣶⠟⠀⠀⠀",
-    "⠀⠀⠀⠀⠙⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠋⠀⠀⠀⠀",
-    "⠀⠀⠀⠀⠀⠈⢿⣿⣿⠻⣿⣿⣿⣿⣿⣿⣿⠟⢻⣿⣿⡿⠃⠀⠀⠀⠀⠀",
-    "⠀⠀⠀⠲⣶⣶⣾⣿⣿⠀⢨⠙⢿⣿⣿⠏⣅⠀⢸⣿⣿⣷⣾⠟⠁⠀⠀⠀",
-    "⠀⠀⠀⠀⠈⠻⢿⣿⣿⢷⣶⣶⣾⣿⣿⣶⣶⣾⠟⣿⣿⣿⣋⠀⠀⠀⠀⠀",
-    "⠀⠀⢀⣀⣀⠐⢶⣿⣿⣧⠁⠀⠋⠁⠈⠋⠀⢀⣾⣿⣿⡿⣷⣶⠀⠀⠀⠀",
-    "⠀⠀⣼⣿⣿⣷⣤⣙⣿⣿⣷⣶⣶⣴⣴⣴⣶⣿⣿⣿⠟⣡⣿⣿⣧⣄⣀⡀",
-    "⢀⣤⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿⣿⣿⣿⣿⣿⣿⣿⠿⢿⣿⡿⠿⣿⣿⣿⣿",
-    "⣿⡿⠛⠿⠟⠉⠉⠉⠸⠋⠀⠻⡿⣿⣿⣿⣿⠻⠇⠀⠀⠈⠀⠀⠈⠉⢸⠃",
-    "⠛⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠈⢿⢻⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀",
-    "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠹⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"
-)
-$script:AsciiIRREBOY = @(
-    "###  ###   ###   ####  ###    ##   #  #",
-    " #   # #   # #   #     # #   #  #  #  #",
-    " #   ##    ##    ###   ###   #  #   ## ",
-    " #   # #   # #   #     # #   #  #    # ",
-    "###  #  #  #  #  ####  ###    ##     # "
-)
-
-# ---- XAML ---------------------------------------------------------------
-$XAML = @'
+# ─── XAML ─────────────────────────────────────────────────────────────────────
+[xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PC Toolkit  //  BY IRREBOY"
-        Height="700" Width="1080"
+        Title="PC Toolkit — BY IRREBOY"
+        Width="1200" Height="740" MinWidth="900" MinHeight="600"
         WindowStartupLocation="CenterScreen"
-        Background="#0a0008" Foreground="#e0d0ff"
-        FontFamily="Consolas" FontSize="12"
+        Background="#0a0015" Foreground="#e0d0ff"
+        FontFamily="Segoe UI" FontSize="13"
         ResizeMode="CanResize">
   <Window.Resources>
 
-    <Style x:Key="SideTabBtn" TargetType="Button">
-      <Setter Property="Background" Value="#0d000b"/>
-      <Setter Property="Foreground" Value="#553366"/>
+    <Style x:Key="NavBtn" TargetType="Button">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#9988bb"/>
       <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Padding" Value="10,9"/>
       <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="Padding" Value="14,8"/>
+      <Setter Property="Height" Value="36"/>
       <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FontFamily" Value="Consolas"/>
-      <Setter Property="FontSize" Value="12"/>
-      <Setter Property="Margin" Value="0,1,0,0"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border Background="{TemplateBinding Background}" CornerRadius="3" Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+            <Border Background="{TemplateBinding Background}" CornerRadius="6"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter VerticalAlignment="Center"/>
             </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#1a0a2e"/>
+                <Setter Property="Foreground" Value="#ccbbee"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
     </Style>
-    <Style x:Key="SideTabActive" TargetType="Button" BasedOn="{StaticResource SideTabBtn}">
-      <Setter Property="Background" Value="#1a0028"/>
-      <Setter Property="Foreground" Value="#cc88ff"/>
+
+    <Style x:Key="NavBtnActive" TargetType="Button" BasedOn="{StaticResource NavBtn}">
+      <Setter Property="Background" Value="#2d1555"/>
+      <Setter Property="Foreground" Value="#ffffff"/>
+    </Style>
+
+    <Style x:Key="ModeBtn" TargetType="Button">
+      <Setter Property="Background" Value="#1a0a2e"/>
+      <Setter Property="Foreground" Value="#9988bb"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush" Value="#3a2060"/>
+      <Setter Property="Height" Value="32"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="5">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#2d1555"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="ModeBtnActive" TargetType="Button" BasedOn="{StaticResource ModeBtn}">
+      <Setter Property="Background" Value="#7b2fff"/>
+      <Setter Property="Foreground" Value="#ffffff"/>
+      <Setter Property="BorderBrush" Value="#9b4fff"/>
     </Style>
 
     <Style x:Key="Btn" TargetType="Button">
-      <Setter Property="Background" Value="#7722aa"/>
+      <Setter Property="Background" Value="#4a1a8a"/>
       <Setter Property="Foreground" Value="#ffffff"/>
       <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Padding" Value="10,7"/>
-      <Setter Property="HorizontalContentAlignment" Value="Left"/>
-      <Setter Property="FontFamily" Value="Consolas"/>
-      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Padding" Value="16,8"/>
+      <Setter Property="Height" Value="34"/>
       <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="Margin" Value="0,0,0,4"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border Background="{TemplateBinding Background}" CornerRadius="3"
-                    Padding="{TemplateBinding Padding}" Opacity="{TemplateBinding Opacity}">
-              <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+            <Border Background="{TemplateBinding Background}" CornerRadius="6"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#6a2aaa"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.4"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
+    </Style>
+
+    <Style x:Key="BtnGreen" TargetType="Button" BasedOn="{StaticResource Btn}">
+      <Setter Property="Background" Value="#1a6b3a"/>
       <Style.Triggers>
-        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="0.8"/></Trigger>
-        <Trigger Property="IsEnabled"   Value="False"><Setter Property="Opacity" Value="0.3"/></Trigger>
+        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#2a8b4a"/></Trigger>
       </Style.Triggers>
     </Style>
-    <Style x:Key="BtnFix" TargetType="Button" BasedOn="{StaticResource Btn}">
-      <Setter Property="Background" Value="#aa2255"/>
-      <Setter Property="Padding" Value="8,3"/>
-      <Setter Property="FontSize" Value="10"/>
-    </Style>
-    <Style x:Key="BtnGreen" TargetType="Button" BasedOn="{StaticResource Btn}">
-      <Setter Property="Background" Value="#1a6a30"/>
-    </Style>
+
     <Style x:Key="BtnRed" TargetType="Button" BasedOn="{StaticResource Btn}">
-      <Setter Property="Background" Value="#7a1818"/>
+      <Setter Property="Background" Value="#6b1a1a"/>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#8b2a2a"/></Trigger>
+      </Style.Triggers>
     </Style>
-    <Style x:Key="BtnGhost" TargetType="Button" BasedOn="{StaticResource Btn}">
-      <Setter Property="Background" Value="#140016"/>
-      <Setter Property="Foreground" Value="#553366"/>
-    </Style>
+
     <Style x:Key="BtnOrange" TargetType="Button" BasedOn="{StaticResource Btn}">
-      <Setter Property="Background" Value="#773800"/>
+      <Setter Property="Background" Value="#7a3a00"/>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#9a4a00"/></Trigger>
+      </Style.Triggers>
     </Style>
+
     <Style x:Key="BtnYellow" TargetType="Button" BasedOn="{StaticResource Btn}">
-      <Setter Property="Background" Value="#665500"/>
-      <Setter Property="Foreground" Value="#ffdd44"/>
+      <Setter Property="Background" Value="#5a5000"/>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#7a7000"/></Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="BtnGhost" TargetType="Button" BasedOn="{StaticResource Btn}">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="#9988bb"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush" Value="#3a2060"/>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="#1a0a2e"/>
+          <Setter Property="Foreground" Value="#ffffff"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="BtnFix" TargetType="Button" BasedOn="{StaticResource Btn}">
+      <Setter Property="Background" Value="#2a1060"/>
+      <Setter Property="Foreground" Value="#bb99ff"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Height" Value="24"/>
+      <Setter Property="Padding" Value="8,2"/>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#3a1880"/></Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="ConsoleScroll" TargetType="ScrollViewer">
+      <Setter Property="Background" Value="#080012"/>
+      <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+      <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+    </Style>
+
+    <Style x:Key="MonSec" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#bb88ff"/>
+      <Setter Property="FontSize" Value="10"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Margin" Value="0,10,0,3"/>
+    </Style>
+
+    <Style x:Key="MonVal" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#ddd0ff"/>
+      <Setter Property="FontSize" Value="12"/>
     </Style>
 
   </Window.Resources>
 
   <Grid>
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="3"/>
-      <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
-    </Grid.RowDefinitions>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="200"/>
+      <ColumnDefinition Width="*"/>
+      <ColumnDefinition Width="290"/>
+    </Grid.ColumnDefinitions>
 
-    <!-- HEADER -->
-    <Border Grid.Row="0" Background="#0d000b" Padding="16,10">
-      <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/>
-        </Grid.ColumnDefinitions>
-        <StackPanel Grid.Column="0" Orientation="Vertical">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="[ " Foreground="#440033" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/>
-            <TextBlock Text="PC TOOLKIT" Foreground="#cc88ff" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/>
-            <TextBlock Text=" ]" Foreground="#440033" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/>
-            <TextBlock Text="  //  BY " Foreground="#440033" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
-            <TextBlock Text="IRREBOY" Foreground="#9922cc" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"/>
+    <!-- LEFT NAV -->
+    <Border Grid.Column="0" Background="#0d0020" BorderBrush="#220040" BorderThickness="0,0,1,0">
+      <DockPanel>
+
+        <Border DockPanel.Dock="Top" Padding="14,16,14,12" BorderBrush="#2a0055" BorderThickness="0,0,0,1">
+          <StackPanel>
+            <TextBlock Text="PC TOOLKIT" FontSize="16" FontWeight="Black" Foreground="#cc88ff"/>
+            <TextBlock Text="BY IRREBOY" FontSize="10" Foreground="#664488" Margin="1,2,0,0"/>
           </StackPanel>
-          <TextBlock x:Name="SysInfo" Text="cargando..." Foreground="#330044" FontSize="10" Margin="0,3,0,0"/>
-          <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-            <TextBlock x:Name="HealthDot"    Text="● " Foreground="#44bb66" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
-            <TextBlock x:Name="HealthScore"  Text="---" Foreground="#44bb66" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
-            <TextBlock Text="/100" Foreground="#330044" FontSize="8" VerticalAlignment="Bottom" Margin="2,0,0,2"/>
-            <TextBlock x:Name="HealthStatus" Text="  calculando..." Foreground="#330044" FontSize="9" VerticalAlignment="Bottom" Margin="4,0,0,2"/>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Padding="14,10" Background="#0a001a" BorderBrush="#220040" BorderThickness="0,0,0,1">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="SALUD DEL SISTEMA" FontSize="9" Foreground="#664488" FontWeight="Bold"/>
+              <TextBlock x:Name="HealthScore" Text="—" FontSize="28" FontWeight="Black" Foreground="#aa66ff" Margin="0,2,0,0"/>
+              <TextBlock x:Name="HealthStatus" Text="Sin escanear" FontSize="10" Foreground="#886699"/>
+            </StackPanel>
+            <Ellipse x:Name="HealthDot" Grid.Column="1" Width="14" Height="14" Fill="#443366" VerticalAlignment="Center"/>
+          </Grid>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" DockPanel.Dock="Top">
+          <StackPanel Margin="8,8,8,8">
+
+            <TextBlock Text="MÓDULOS" FontSize="9" FontWeight="Bold" Foreground="#553377" Margin="6,4,0,6"/>
+            <Button x:Name="TabSecurity"  Content="🔒  Seguridad"  Style="{StaticResource NavBtnActive}"/>
+            <Button x:Name="TabClean"     Content="🧹  Limpieza"   Style="{StaticResource NavBtn}" Margin="0,2,0,0"/>
+            <Button x:Name="TabGaming"    Content="🎮  Gaming"     Style="{StaticResource NavBtn}" Margin="0,2,0,0"/>
+            <Button x:Name="TabTweaks"    Content="⚙  Tweaks"     Style="{StaticResource NavBtn}" Margin="0,2,0,0"/>
+
+            <TextBlock Text="SISTEMA" FontSize="9" FontWeight="Bold" Foreground="#553377" Margin="6,14,0,6"/>
+            <Button x:Name="TabHardware"  Content="💻  Hardware"   Style="{StaticResource NavBtn}"/>
+            <Button x:Name="TabProcesses" Content="📊  Procesos"   Style="{StaticResource NavBtn}" Margin="0,2,0,0"/>
+            <Button x:Name="TabNetwork"   Content="🌐  Red"        Style="{StaticResource NavBtn}" Margin="0,2,0,0"/>
+            <Button x:Name="TabHistory"   Content="📋  Historial"  Style="{StaticResource NavBtn}" Margin="0,2,0,0"/>
+
+            <TextBlock Text="PERFIL" FontSize="9" FontWeight="Bold" Foreground="#553377" Margin="6,14,0,6"/>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Button x:Name="ModGaming"  Grid.Column="0" Content="GAM" Style="{StaticResource ModeBtn}" Margin="0,0,2,0"/>
+              <Button x:Name="ModTrabajo" Grid.Column="1" Content="TRB" Style="{StaticResource ModeBtn}" Margin="2,0,2,0"/>
+              <Button x:Name="ModAhorro"  Grid.Column="2" Content="AHR" Style="{StaticResource ModeBtn}" Margin="2,0,0,0"/>
+            </Grid>
+            <TextBlock x:Name="ModeLabel" Text="Modo: Normal" FontSize="10"
+                       Foreground="#776699" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+
           </StackPanel>
-        </StackPanel>
-        <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-          <TextBlock x:Name="ClockText" Text="" Foreground="#660099" FontSize="20" FontWeight="Bold" HorizontalAlignment="Right"/>
-          <TextBlock x:Name="DateText"  Text="" Foreground="#330044" FontSize="10"  HorizontalAlignment="Right"/>
-        </StackPanel>
-      </Grid>
+        </ScrollViewer>
+
+        <Border DockPanel.Dock="Bottom" Padding="14,8" BorderBrush="#220040" BorderThickness="0,1,0,0">
+          <TextBlock Text="v3.0  |  Admin Mode" FontSize="9" Foreground="#443366"/>
+        </Border>
+
+      </DockPanel>
     </Border>
 
-    <!-- PROGRESS BAR -->
-    <ProgressBar x:Name="ScanProgress" Grid.Row="1"
-                 IsIndeterminate="True" Visibility="Collapsed"
-                 Foreground="#cc44ff" Background="#120010" BorderThickness="0"/>
+    <!-- CENTER -->
+    <Grid Grid.Column="1">
 
-    <!-- 3-COLUMN CONTENT -->
-    <Grid Grid.Row="2">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="175"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="252"/>
-      </Grid.ColumnDefinitions>
+      <!-- LOG PANEL (Security/Clean/Gaming/Tweaks) -->
+      <Grid x:Name="LogPanel">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-      <!-- LEFT: nav + buttons -->
-      <Border Grid.Column="0" Background="#0d000b">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel Margin="10,12">
+        <Border Grid.Row="0" Background="#0d0020" BorderBrush="#220040" BorderThickness="0,0,0,1" Padding="14,10">
+          <StackPanel>
+            <WrapPanel x:Name="ToolbarSecurity">
+              <Button x:Name="BtnSecScan"     Content="▶  Escanear"              Style="{StaticResource Btn}"       Margin="0,0,8,0"/>
+              <Button x:Name="BtnSecFix"      Content="⚡  Aplicar todos los fix" Style="{StaticResource BtnOrange}" Margin="0,0,8,0"/>
+              <Button x:Name="BtnSecExport"   Content="📄  Exportar HTML"         Style="{StaticResource BtnGhost}"  Margin="0,0,8,0"/>
+              <Button x:Name="BtnSecSchedule" Content="🕐  Auto-escaneo"          Style="{StaticResource BtnGhost}"/>
+            </WrapPanel>
+            <WrapPanel x:Name="ToolbarClean" Visibility="Collapsed">
+              <Button x:Name="BtnClean"     Content="🧹  Limpiar"        Style="{StaticResource BtnGreen}"  Margin="0,0,8,0"/>
+              <Button x:Name="BtnCleanDism" Content="🔧  Limpiar + DISM" Style="{StaticResource BtnOrange}" Margin="0,0,8,0"/>
+              <Button x:Name="BtnRamClean"  Content="💾  Limpiar RAM"    Style="{StaticResource BtnGhost}"/>
+            </WrapPanel>
+            <WrapPanel x:Name="ToolbarGaming" Visibility="Collapsed">
+              <Button x:Name="BtnGameApply"   Content="🚀  Aplicar Boost"  Style="{StaticResource BtnGreen}"  Margin="0,0,8,0"/>
+              <Button x:Name="BtnGameRestore" Content="↩  Restaurar"       Style="{StaticResource BtnOrange}" Margin="0,0,8,0"/>
+              <Button x:Name="BtnGameCheck"   Content="📋  Verificar"      Style="{StaticResource BtnGhost}"  Margin="0,0,8,0"/>
+              <Button x:Name="BtnKillProcs"   Content="💀  Matar Procesos" Style="{StaticResource BtnRed}"    Margin="0,0,8,0"/>
+              <Button x:Name="BtnPingTest"    Content="📡  Ping Test"      Style="{StaticResource BtnGhost}"  Margin="0,0,8,0"/>
+              <Button x:Name="BtnFlushDns"    Content="🔄  Flush DNS"      Style="{StaticResource BtnGhost}"/>
+            </WrapPanel>
+            <WrapPanel x:Name="ToolbarTweaks" Visibility="Collapsed">
+              <TextBlock Text="Tweaks del sistema — aplica individualmente"
+                         Foreground="#886699" VerticalAlignment="Center" FontSize="12"/>
+            </WrapPanel>
+          </StackPanel>
+        </Border>
 
-            <TextBlock Text="// MODULOS" Foreground="#440055" FontSize="9" FontWeight="Bold" Margin="4,0,0,5"/>
-            <Button x:Name="TabSecurity" Content="[S]  SEGURIDAD"  Style="{StaticResource SideTabActive}"/>
-            <Button x:Name="TabClean"    Content="[C]  LIMPIEZA"   Style="{StaticResource SideTabBtn}"/>
-            <Button x:Name="TabGaming"   Content="[G]  GAMING"     Style="{StaticResource SideTabBtn}"/>
-            <Button x:Name="TabTweaks"   Content="[T]  TWEAKS"     Style="{StaticResource SideTabBtn}"/>
+        <ScrollViewer x:Name="ConsoleScroll" Grid.Row="1" Style="{StaticResource ConsoleScroll}">
+          <StackPanel x:Name="ConsolePanel" Margin="14,10"/>
+        </ScrollViewer>
 
-            <Rectangle Height="1" Fill="#1a001a" Margin="0,12,0,10"/>
+        <ScrollViewer x:Name="TweaksScrollView" Grid.Row="1" Visibility="Collapsed"
+                      Background="#080012" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="16,14">
 
-            <!-- SECURITY PANEL -->
-            <StackPanel x:Name="PanelSecurity">
-              <Button x:Name="BtnRunSecurity" Content="> EJECUTAR CHEQUEO" Style="{StaticResource Btn}"/>
-              <Button x:Name="BtnFixAll"      Content="[!] APLICAR FIXES"  Style="{StaticResource BtnFix}" IsEnabled="False"/>
-              <Button x:Name="BtnOpenLog"     Content="[L] VER REPORTE"    Style="{StaticResource BtnGhost}" IsEnabled="False"/>
-            </StackPanel>
+            <TextBlock Text="PRIVACIDAD" Foreground="#bb88ff" FontSize="11" FontWeight="Bold" Margin="0,0,0,8"/>
 
-            <!-- CLEAN PANEL -->
-            <StackPanel x:Name="PanelClean" Visibility="Collapsed">
-              <Button x:Name="BtnRunClean" Content="> LIMPIAR PC" Style="{StaticResource Btn}"/>
-              <CheckBox x:Name="ChkDISM" Foreground="#553366" FontFamily="Consolas" FontSize="10"
-                        Content="DISM cleanup (lento)" Margin="2,4,0,4"/>
-              <TextBlock Text="Cierra los navegadores antes." Foreground="#330033"
-                         FontSize="9" TextWrapping="Wrap" Margin="2,2,0,0"/>
-            </StackPanel>
-
-            <!-- GAMING PANEL -->
-            <StackPanel x:Name="PanelGaming" Visibility="Collapsed">
-              <Border x:Name="AdminWarning" Visibility="Collapsed"
-                      Background="#221100" BorderBrush="#664400" BorderThickness="1"
-                      CornerRadius="3" Padding="6,5" Margin="0,0,0,6">
+            <Border Background="#0d0020" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <StackPanel>
-                  <TextBlock Text="! Sin permisos Admin" Foreground="#ffaa00" FontSize="9" FontWeight="Bold"/>
-                  <TextBlock Text="Apply / Restore requieren admin." Foreground="#998844" FontSize="9" TextWrapping="Wrap" Margin="0,2,0,4"/>
-                  <Button x:Name="BtnElevate" Content="[^] REINICIAR COMO ADMIN" Style="{StaticResource BtnYellow}"/>
+                  <TextBlock Text="Telemetría de Windows" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                  <TextBlock Text="Desactiva la recopilación de datos de diagnóstico" Foreground="#776699" FontSize="11"/>
                 </StackPanel>
-              </Border>
+                <Button x:Name="BtnTelemetria" Grid.Column="1" Content="Aplicar" Style="{StaticResource BtnFix}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
 
-              <Button x:Name="BtnGameCheck"   Content="[?] ESTADO ACTUAL"     Style="{StaticResource BtnGhost}"/>
-              <Button x:Name="BtnGameApply"   Content="[+] OPTIMIZAR"         Style="{StaticResource BtnGreen}"/>
-              <Button x:Name="BtnGameRestore" Content="[-] RESTAURAR"         Style="{StaticResource BtnRed}"/>
-              <TextBlock x:Name="BackupStatus" Text="sin backup" Foreground="#440033"
-                         FontSize="9" Margin="2,2,0,10" TextWrapping="Wrap"/>
+            <Border Background="#0d0020" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Cortana" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                  <TextBlock Text="Desactiva el asistente de voz y su búsqueda web" Foreground="#776699" FontSize="11"/>
+                </StackPanel>
+                <Button x:Name="BtnCortana" Grid.Column="1" Content="Aplicar" Style="{StaticResource BtnFix}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
 
-              <Rectangle Height="1" Fill="#1a001a" Margin="0,4,0,6"/>
-              <Button x:Name="BtnKillProcs" Content="[X] KILL PROCESOS"       Style="{StaticResource BtnRed}"/>
+            <Border Background="#0d0020" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="OneDrive" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                  <TextBlock Text="Desinstala y desactiva OneDrive del inicio" Foreground="#776699" FontSize="11"/>
+                </StackPanel>
+                <Button x:Name="BtnOneDrive" Grid.Column="1" Content="Aplicar" Style="{StaticResource BtnFix}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
 
-              <Rectangle Height="1" Fill="#1a001a" Margin="0,4,0,6"/>
-              <Button x:Name="BtnPingTest"   Content="[P] PING SERVERS"       Style="{StaticResource BtnOrange}"/>
-              <Button x:Name="BtnSpeedTest"  Content="[W] SPEED TEST"          Style="{StaticResource BtnOrange}"/>
+            <Border Background="#0d0020" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Notificaciones" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                  <TextBlock Text="Desactiva el centro de notificaciones" Foreground="#776699" FontSize="11"/>
+                </StackPanel>
+                <Button x:Name="BtnNotif" Grid.Column="1" Content="Aplicar" Style="{StaticResource BtnFix}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
 
-              <Rectangle Height="1" Fill="#1a001a" Margin="0,4,0,6"/>
-              <Button x:Name="BtnVFX"          Content="[V] EFECTOS VISUALES" Style="{StaticResource BtnGhost}"/>
-              <Button x:Name="BtnFlushDNS"     Content="[N] FLUSH DNS"         Style="{StaticResource BtnGhost}"/>
-              <Button x:Name="BtnResetNet"     Content="[R] RESET ADAPTADOR"   Style="{StaticResource BtnGhost}"/>
-              <Button x:Name="BtnClearShaders" Content="[S] LIMPIAR SHADERS"   Style="{StaticResource BtnGhost}"/>
-            </StackPanel>
+            <TextBlock Text="RENDIMIENTO" Foreground="#bb88ff" FontSize="11" FontWeight="Bold" Margin="0,8,0,8"/>
 
-            <!-- TWEAKS PANEL -->
-            <StackPanel x:Name="PanelTweaks" Visibility="Collapsed">
-              <TextBlock Text="// PRIVACIDAD" Foreground="#440055" FontSize="9" FontWeight="Bold" Margin="4,0,0,5"/>
-              <Button x:Name="BtnTweakTelemetry"  Content="[T] TELEMETRIA"        Style="{StaticResource BtnGhost}"/>
-              <Button x:Name="BtnTweakCortana"    Content="[C] CORTANA"           Style="{StaticResource BtnGhost}"/>
-              <Button x:Name="BtnTweakOneDrive"   Content="[O] ONEDRIVE STARTUP"  Style="{StaticResource BtnGhost}"/>
-              <Button x:Name="BtnTweakNotifs"     Content="[N] NOTIFICACIONES"    Style="{StaticResource BtnGhost}"/>
-              <Rectangle Height="1" Fill="#1a001a" Margin="0,8,0,6"/>
-              <TextBlock Text="// RENDIMIENTO" Foreground="#440055" FontSize="9" FontWeight="Bold" Margin="4,0,0,5"/>
-              <Button x:Name="BtnTweakHibernate"  Content="[H] HIBERNATE OFF"     Style="{StaticResource BtnOrange}"/>
-              <Button x:Name="BtnTweakPowerThrot" Content="[P] POWER THROTTLING"  Style="{StaticResource BtnOrange}"/>
-              <Button x:Name="BtnTweakQoS"        Content="[Q] QoS BANDWIDTH"     Style="{StaticResource BtnOrange}"/>
-              <Button x:Name="BtnTweakWin32Pri"   Content="[W] WIN32 PRIORITY"    Style="{StaticResource BtnOrange}"/>
-            </StackPanel>
+            <Border Background="#0d0020" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Hibernación" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                  <TextBlock Text="Desactiva hibernación y borra hiberfil.sys" Foreground="#776699" FontSize="11"/>
+                </StackPanel>
+                <Button x:Name="BtnHibernate" Grid.Column="1" Content="Aplicar" Style="{StaticResource BtnFix}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+
+            <Border Background="#0d0020" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Power Throttling" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                  <TextBlock Text="Desactiva la limitación de CPU en background" Foreground="#776699" FontSize="11"/>
+                </StackPanel>
+                <Button x:Name="BtnPowerThrottling" Grid.Column="1" Content="Aplicar" Style="{StaticResource BtnFix}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+
+            <Border Background="#0d0020" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="QoS Bandwidth" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                  <TextBlock Text="Elimina la reserva del 20% de ancho de banda" Foreground="#776699" FontSize="11"/>
+                </StackPanel>
+                <Button x:Name="BtnQoS" Grid.Column="1" Content="Aplicar" Style="{StaticResource BtnFix}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+
+            <Border Background="#0d0020" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Win32 Priority Separation" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                  <TextBlock Text="Optimiza la prioridad del planificador de CPU" Foreground="#776699" FontSize="11"/>
+                </StackPanel>
+                <Button x:Name="BtnWin32Pri" Grid.Column="1" Content="Aplicar" Style="{StaticResource BtnFix}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+
+            <TextBlock Text="INICIO" Foreground="#bb88ff" FontSize="11" FontWeight="Bold" Margin="0,8,0,8"/>
+
+            <Border Background="#0d0020" CornerRadius="8" Padding="14,10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Administrador de Inicio" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                  <TextBlock Text="Ver y deshabilitar programas que arrancan con Windows" Foreground="#776699" FontSize="11"/>
+                </StackPanel>
+                <Button x:Name="BtnStartupMgr" Grid.Column="1" Content="Abrir" Style="{StaticResource BtnFix}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
 
           </StackPanel>
         </ScrollViewer>
-      </Border>
 
-      <!-- CENTER: console -->
-      <Border Grid.Column="1" Background="#05000a">
-        <ScrollViewer x:Name="LogScroll" VerticalScrollBarVisibility="Auto">
-          <StackPanel x:Name="LogPanel" Margin="14,8"/>
-        </ScrollViewer>
-      </Border>
+        <Border Grid.Row="2" Background="#0a001a" BorderBrush="#220040" BorderThickness="0,1,0,0" Padding="14,6">
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="StatusBar" Text="Listo" Foreground="#776699" FontSize="11"/>
+            <TextBlock x:Name="JobStatus" Grid.Column="1" Text="" Foreground="#aa66ff" FontSize="11"/>
+          </Grid>
+        </Border>
+      </Grid>
 
-      <!-- RIGHT: live monitor -->
-      <Border Grid.Column="2" Background="#060010">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel Margin="12,12">
-            <TextBlock Text="MONITOR" Foreground="#440055" FontWeight="Bold" FontSize="9" Margin="0,0,0,12"/>
+      <!-- PROCESS PANEL -->
+      <Grid x:Name="ProcPanel" Visibility="Collapsed">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Border Grid.Row="0" Background="#0d0020" BorderBrush="#220040" BorderThickness="0,0,0,1" Padding="14,10">
+          <WrapPanel>
+            <TextBox x:Name="ProcSearch" Width="200" Background="#1a0a2e" Foreground="#e0d0ff"
+                     BorderBrush="#3a2060" BorderThickness="1" Padding="8,6"
+                     VerticalContentAlignment="Center" Margin="0,0,8,0"/>
+            <Button x:Name="BtnProcRefresh" Content="🔄  Actualizar"       Style="{StaticResource BtnGhost}" Margin="0,0,8,0"/>
+            <Button x:Name="BtnProcKill"    Content="❌  Matar proceso"    Style="{StaticResource BtnRed}"   Margin="0,0,8,0"/>
+            <Button x:Name="BtnProcSuspend" Content="⏸  Suspender"        Style="{StaticResource BtnOrange}"/>
+          </WrapPanel>
+        </Border>
+        <ListView x:Name="ProcList" Grid.Row="1" Background="#080012" Foreground="#ddd0ff"
+                  BorderThickness="0" SelectionMode="Single"
+                  VirtualizingPanel.IsVirtualizing="True">
+          <ListView.View>
+            <GridView>
+              <GridViewColumn Header="PID"      Width="65"  DisplayMemberBinding="{Binding PID}"/>
+              <GridViewColumn Header="Nombre"   Width="200" DisplayMemberBinding="{Binding Name}"/>
+              <GridViewColumn Header="CPU s"    Width="75"  DisplayMemberBinding="{Binding CPU}"/>
+              <GridViewColumn Header="RAM MB"   Width="90"  DisplayMemberBinding="{Binding RAM}"/>
+              <GridViewColumn Header="Handles"  Width="75"  DisplayMemberBinding="{Binding Handles}"/>
+              <GridViewColumn Header="Usuario"  Width="130" DisplayMemberBinding="{Binding User}"/>
+            </GridView>
+          </ListView.View>
+        </ListView>
+        <Border Grid.Row="2" Background="#0a001a" BorderBrush="#220040" BorderThickness="0,1,0,0" Padding="14,6">
+          <TextBlock x:Name="ProcCount" Text="" Foreground="#776699" FontSize="11"/>
+        </Border>
+      </Grid>
 
-            <!-- CPU: lbl | bar | pct -->
-            <Grid Margin="0,0,0,0">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="34"/><ColumnDefinition Width="*"/><ColumnDefinition Width="26"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="CPU"  Foreground="#2a1540" FontSize="9" VerticalAlignment="Center"/>
-              <TextBlock x:Name="MonCpuBar" Text="░░░░░░░░░░░░░░░░░░░░" Foreground="#33cc66" FontSize="10" Grid.Column="1" VerticalAlignment="Center"/>
-              <TextBlock x:Name="MonCpuPct" Text="--"   Foreground="#33cc66" FontSize="9" FontWeight="Bold" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-            </Grid>
-            <TextBlock x:Name="MonCpuInfo"  Text="--" Foreground="#251035" FontSize="8" Margin="34,1,0,1" TextWrapping="Wrap"/>
-            <TextBlock x:Name="MonCpuSpark" Text=""   Foreground="#1a0028" FontSize="9" Margin="34,0,0,7"/>
-
-            <!-- RAM -->
-            <Grid Margin="0,0,0,0">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="34"/><ColumnDefinition Width="*"/><ColumnDefinition Width="26"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="RAM"  Foreground="#2a1540" FontSize="9" VerticalAlignment="Center"/>
-              <TextBlock x:Name="MonRamBar" Text="░░░░░░░░░░░░░░░░░░░░" Foreground="#33cc66" FontSize="10" Grid.Column="1" VerticalAlignment="Center"/>
-              <TextBlock x:Name="MonRamPct" Text="--"   Foreground="#33cc66" FontSize="9" FontWeight="Bold" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-            </Grid>
-            <TextBlock x:Name="MonRamInfo" Text="--" Foreground="#251035" FontSize="8" Margin="34,1,0,7"/>
-
-            <!-- GPU -->
-            <Grid Margin="0,0,0,0">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="34"/><ColumnDefinition Width="*"/><ColumnDefinition Width="26"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="GPU"  Foreground="#2a1540" FontSize="9" VerticalAlignment="Center"/>
-              <TextBlock x:Name="MonGpuBar" Text="░░░░░░░░░░░░░░░░░░░░" Foreground="#33cc66" FontSize="10" Grid.Column="1" VerticalAlignment="Center"/>
-              <TextBlock x:Name="MonGpuPct" Text="--"   Foreground="#33cc66" FontSize="9" FontWeight="Bold" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-            </Grid>
-            <TextBlock x:Name="MonGpuInfo"  Text="--" Foreground="#251035" FontSize="8" Margin="34,1,0,1" TextWrapping="Wrap"/>
-            <TextBlock x:Name="MonGpuSpark" Text=""   Foreground="#1a0028" FontSize="9" Margin="34,0,0,7"/>
-
-            <!-- TEMP -->
-            <Grid Margin="0,0,0,0">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="34"/><ColumnDefinition Width="*"/><ColumnDefinition Width="26"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="TEMP" Foreground="#2a1540" FontSize="9" VerticalAlignment="Center"/>
-              <TextBlock x:Name="MonTempBar" Text="░░░░░░░░░░░░░░░░░░░░" Foreground="#33cc66" FontSize="10" Grid.Column="1" VerticalAlignment="Center"/>
-              <TextBlock x:Name="MonTempPct" Text="--"   Foreground="#33cc66" FontSize="9" FontWeight="Bold" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-            </Grid>
-            <TextBlock x:Name="MonTempInfo" Text="--" Foreground="#251035" FontSize="8" Margin="34,1,0,10"/>
-
-            <Rectangle Height="1" Fill="#0e0018" Margin="0,0,0,8"/>
-
-            <!-- DISCO -->
-            <Grid Margin="0,0,0,1">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="34"/><ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="DSK"  Foreground="#2a1540" FontSize="9" VerticalAlignment="Center"/>
-              <TextBlock x:Name="MonDiskBar" Text="░░░░░░░░░░░░░░░░░░░░" Foreground="#33cc66" FontSize="10" Grid.Column="1" VerticalAlignment="Center"/>
-            </Grid>
-            <TextBlock x:Name="MonDiskSpace" Text="-- / --"   Foreground="#251035" FontSize="8" Margin="34,1,0,1"/>
-            <TextBlock x:Name="MonDiskIO"    Text="R --  W --" Foreground="#251035" FontSize="8" Margin="34,0,0,8"/>
-
-            <!-- RED -->
-            <Grid Margin="0,0,0,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="34"/><ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="NET" Foreground="#2a1540" FontSize="9" Margin="0,1,0,0"/>
-              <StackPanel Grid.Column="1">
-                <TextBlock x:Name="MonNetDown" Text="↓ --" Foreground="#251035" FontSize="9"/>
-                <TextBlock x:Name="MonNetUp"   Text="↑ --" Foreground="#251035" FontSize="9"/>
+      <!-- HARDWARE PANEL -->
+      <ScrollViewer x:Name="HwPanel" Visibility="Collapsed" Background="#080012"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="20,16">
+          <TextBlock Text="INFORMACIÓN DE HARDWARE" FontSize="14" FontWeight="Bold"
+                     Foreground="#cc88ff" Margin="0,0,0,16"/>
+          <WrapPanel>
+            <Border Background="#0d0020" CornerRadius="10" Padding="16,14" Margin="0,0,12,12" MinWidth="260">
+              <StackPanel>
+                <TextBlock Text="PROCESADOR" Foreground="#bb88ff" FontSize="10" FontWeight="Bold" Margin="0,0,0,8"/>
+                <TextBlock x:Name="HwCpuName"   Text="—" Foreground="#ddd0ff" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock x:Name="HwCpuCores"  Text="—" Foreground="#886699" FontSize="11" Margin="0,4,0,0"/>
+                <TextBlock x:Name="HwCpuSpeed"  Text="—" Foreground="#886699" FontSize="11"/>
+                <TextBlock x:Name="HwCpuSocket" Text="—" Foreground="#886699" FontSize="11"/>
               </StackPanel>
-            </Grid>
+            </Border>
+            <Border Background="#0d0020" CornerRadius="10" Padding="16,14" Margin="0,0,12,12" MinWidth="260">
+              <StackPanel>
+                <TextBlock Text="MEMORIA RAM" Foreground="#bb88ff" FontSize="10" FontWeight="Bold" Margin="0,0,0,8"/>
+                <TextBlock x:Name="HwRamTotal"  Text="—" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                <TextBlock x:Name="HwRamUsed"   Text="—" Foreground="#886699" FontSize="11" Margin="0,4,0,0"/>
+                <TextBlock x:Name="HwRamSlots"  Text="—" Foreground="#886699" FontSize="11"/>
+                <TextBlock x:Name="HwRamSpeed"  Text="—" Foreground="#886699" FontSize="11"/>
+              </StackPanel>
+            </Border>
+            <Border Background="#0d0020" CornerRadius="10" Padding="16,14" Margin="0,0,12,12" MinWidth="260">
+              <StackPanel>
+                <TextBlock Text="TARJETA GRÁFICA" Foreground="#bb88ff" FontSize="10" FontWeight="Bold" Margin="0,0,0,8"/>
+                <TextBlock x:Name="HwGpuName"   Text="—" Foreground="#ddd0ff" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock x:Name="HwGpuVram"   Text="—" Foreground="#886699" FontSize="11" Margin="0,4,0,0"/>
+                <TextBlock x:Name="HwGpuDriver" Text="—" Foreground="#886699" FontSize="11"/>
+              </StackPanel>
+            </Border>
+            <Border Background="#0d0020" CornerRadius="10" Padding="16,14" Margin="0,0,12,12" MinWidth="260">
+              <StackPanel>
+                <TextBlock Text="PLACA MADRE" Foreground="#bb88ff" FontSize="10" FontWeight="Bold" Margin="0,0,0,8"/>
+                <TextBlock x:Name="HwMoboName"  Text="—" Foreground="#ddd0ff" FontWeight="SemiBold"/>
+                <TextBlock x:Name="HwMoboMfg"   Text="—" Foreground="#886699" FontSize="11" Margin="0,4,0,0"/>
+                <TextBlock x:Name="HwBiosVer"   Text="—" Foreground="#886699" FontSize="11"/>
+                <TextBlock x:Name="HwBiosDate"  Text="—" Foreground="#886699" FontSize="11"/>
+              </StackPanel>
+            </Border>
+            <Border Background="#0d0020" CornerRadius="10" Padding="16,14" Margin="0,0,12,12" MinWidth="260">
+              <StackPanel>
+                <TextBlock Text="ALMACENAMIENTO" Foreground="#bb88ff" FontSize="10" FontWeight="Bold" Margin="0,0,0,8"/>
+                <TextBlock x:Name="HwDiskInfo" Text="—" Foreground="#ddd0ff" TextWrapping="Wrap"/>
+              </StackPanel>
+            </Border>
+          </WrapPanel>
+          <Button x:Name="BtnHwRefresh" Content="🔄  Actualizar información"
+                  Style="{StaticResource BtnGhost}" HorizontalAlignment="Left" Margin="0,8,0,0"/>
+        </StackPanel>
+      </ScrollViewer>
 
-            <Rectangle Height="1" Fill="#0e0018" Margin="0,0,0,8"/>
-
-            <TextBlock x:Name="MonProc1" Text="--" Foreground="#251035" FontSize="9" Margin="0,0,0,2"/>
-            <TextBlock x:Name="MonProc2" Text="--" Foreground="#251035" FontSize="9" Margin="0,0,0,2"/>
-            <TextBlock x:Name="MonProc3" Text="--" Foreground="#251035" FontSize="9" Margin="0,0,0,8"/>
-
-            <TextBlock x:Name="MonUptime"     Text="--" Foreground="#251035" FontSize="8" Margin="0,0,0,1"/>
-            <TextBlock x:Name="MonLastUpdate" Text=""   Foreground="#140020" FontSize="8"/>
-          </StackPanel>
+      <!-- NETWORK PANEL -->
+      <Grid x:Name="NetPanel" Visibility="Collapsed">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Border Grid.Row="0" Background="#0d0020" BorderBrush="#220040" BorderThickness="0,0,0,1" Padding="14,10">
+          <WrapPanel>
+            <Button x:Name="BtnNetRefresh"  Content="🔄  Adaptadores"     Style="{StaticResource BtnGhost}" Margin="0,0,8,0"/>
+            <Button x:Name="BtnNetConnTest" Content="🌐  Test Conexión"   Style="{StaticResource BtnGhost}" Margin="0,0,8,0"/>
+            <Button x:Name="BtnNetTrace"    Content="🗺  Traceroute"     Style="{StaticResource BtnGhost}" Margin="0,0,8,0"/>
+            <Button x:Name="BtnNetFlushDns" Content="🔄  Flush DNS"       Style="{StaticResource BtnGhost}" Margin="0,0,8,0"/>
+            <Button x:Name="BtnNetReset"    Content="♻  Reset Adaptador" Style="{StaticResource BtnOrange}"/>
+          </WrapPanel>
+        </Border>
+        <ScrollViewer Grid.Row="1" Background="#080012" VerticalScrollBarVisibility="Auto">
+          <StackPanel x:Name="NetContent" Margin="20,14"/>
         </ScrollViewer>
-      </Border>
+      </Grid>
+
+      <!-- HISTORY PANEL -->
+      <Grid x:Name="HistPanel" Visibility="Collapsed">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Border Grid.Row="0" Background="#0d0020" BorderBrush="#220040" BorderThickness="0,0,0,1" Padding="14,10">
+          <WrapPanel>
+            <Button x:Name="BtnHistRefresh" Content="🔄  Actualizar"          Style="{StaticResource BtnGhost}" Margin="0,0,8,0"/>
+            <Button x:Name="BtnHistClear"   Content="🗑  Limpiar historial" Style="{StaticResource BtnRed}"/>
+          </WrapPanel>
+        </Border>
+        <ScrollViewer Grid.Row="1" Background="#080012" VerticalScrollBarVisibility="Auto">
+          <StackPanel x:Name="HistContent" Margin="20,14"/>
+        </ScrollViewer>
+      </Grid>
 
     </Grid>
 
-    <!-- STATUS BAR -->
-    <Border Grid.Row="3" Background="#070006" Padding="12,5">
-      <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/>
-        </Grid.ColumnDefinitions>
-        <TextBlock x:Name="StatusBar"   Text="listo." Foreground="#440055" FontSize="10"/>
-        <TextBlock x:Name="StatusRight" Text=""       Foreground="#330044" FontSize="10" Grid.Column="1"/>
-      </Grid>
+    <!-- RIGHT MONITOR -->
+    <Border Grid.Column="2" Background="#0d0020" BorderBrush="#220040" BorderThickness="1,0,0,0">
+      <DockPanel>
+
+        <Border DockPanel.Dock="Top" Padding="14,12" BorderBrush="#2a0055" BorderThickness="0,0,0,1">
+          <TextBlock Text="MONITOR EN VIVO" FontSize="10" FontWeight="Bold" Foreground="#9966cc"/>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" DockPanel.Dock="Top">
+          <StackPanel Margin="14,6,14,14">
+
+            <TextBlock Text="CPU" Style="{StaticResource MonSec}"/>
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <ProgressBar x:Name="MonCpuBar" Height="8" Maximum="100" Value="0"
+                           Background="#1a0a2e" Foreground="#9966ff" VerticalAlignment="Center"/>
+              <TextBlock x:Name="MonCpuPct" Grid.Column="1" Text="0%" Style="{StaticResource MonVal}" Margin="8,0,0,0"/>
+            </Grid>
+            <TextBlock x:Name="MonCpuSpark" Text="" Foreground="#7755bb" FontSize="10"
+                       FontFamily="Consolas" Margin="0,2,0,0"/>
+            <TextBlock x:Name="MonCpuTemp"  Text="Temp: —" Foreground="#aa7733" FontSize="11" Margin="0,2,0,0"/>
+
+            <TextBlock Text="RAM" Style="{StaticResource MonSec}"/>
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <ProgressBar x:Name="MonRamBar" Height="8" Maximum="100" Value="0"
+                           Background="#1a0a2e" Foreground="#44aaff" VerticalAlignment="Center"/>
+              <TextBlock x:Name="MonRamPct" Grid.Column="1" Text="0%" Style="{StaticResource MonVal}" Margin="8,0,0,0"/>
+            </Grid>
+            <TextBlock x:Name="MonRamUsed" Text="— / — GB" Foreground="#5588cc" FontSize="11" Margin="0,2,0,0"/>
+
+            <TextBlock Text="GPU" Style="{StaticResource MonSec}"/>
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <ProgressBar x:Name="MonGpuBar" Height="8" Maximum="100" Value="0"
+                           Background="#1a0a2e" Foreground="#ff6633" VerticalAlignment="Center"/>
+              <TextBlock x:Name="MonGpuPct" Grid.Column="1" Text="0%" Style="{StaticResource MonVal}" Margin="8,0,0,0"/>
+            </Grid>
+            <TextBlock x:Name="MonGpuSpark" Text="" Foreground="#bb5522" FontSize="10"
+                       FontFamily="Consolas" Margin="0,2,0,0"/>
+            <TextBlock x:Name="MonGpuTemp"  Text="Temp GPU: —" Foreground="#aa7733" FontSize="11" Margin="0,2,0,0"/>
+
+            <TextBlock Text="DISCO (C:)" Style="{StaticResource MonSec}"/>
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <ProgressBar x:Name="MonDiskBar" Height="8" Maximum="100" Value="0"
+                           Background="#1a0a2e" Foreground="#44dd88" VerticalAlignment="Center"/>
+              <TextBlock x:Name="MonDiskPct" Grid.Column="1" Text="0%" Style="{StaticResource MonVal}" Margin="8,0,0,0"/>
+            </Grid>
+            <TextBlock x:Name="MonDiskFree" Text="Libre: — GB"  Foreground="#338855" FontSize="11" Margin="0,2,0,0"/>
+            <TextBlock x:Name="MonDiskIO"   Text="↓— ↑—"        Foreground="#338855" FontSize="11"/>
+
+            <TextBlock Text="RED" Style="{StaticResource MonSec}"/>
+            <TextBlock x:Name="MonNetDl" Text="↓ —" Foreground="#66ccff" FontSize="12" FontFamily="Consolas"/>
+            <TextBlock x:Name="MonNetUl" Text="↑ —" Foreground="#66aaff" FontSize="12" FontFamily="Consolas"/>
+
+            <TextBlock Text="TOP PROCESOS" Style="{StaticResource MonSec}"/>
+            <TextBlock x:Name="MonProc1" Text="—" Foreground="#cc99ff" FontSize="11" FontFamily="Consolas"/>
+            <TextBlock x:Name="MonProc2" Text="—" Foreground="#aa77ee" FontSize="11" FontFamily="Consolas"/>
+            <TextBlock x:Name="MonProc3" Text="—" Foreground="#8855cc" FontSize="11" FontFamily="Consolas"/>
+
+            <TextBlock Text="SISTEMA" Style="{StaticResource MonSec}"/>
+            <TextBlock x:Name="MonUptime" Text="Up: —"   Foreground="#aa88dd" FontSize="11"/>
+            <TextBlock x:Name="MonOS"     Text="OS: —"   Foreground="#886699" FontSize="10" TextWrapping="Wrap"/>
+            <TextBlock x:Name="MonHost"   Text="Host: —" Foreground="#886699" FontSize="10"/>
+
+          </StackPanel>
+        </ScrollViewer>
+
+      </DockPanel>
     </Border>
 
   </Grid>
 </Window>
 '@
 
-# ---- Cargar XAML --------------------------------------------------------
-$reader = [System.Xml.XmlNodeReader]::new([xml]$XAML)
-$Window = [Windows.Markup.XamlReader]::Load($reader)
+# ─── Build Window ─────────────────────────────────────────────────────────────
+$reader = [System.Xml.XmlNodeReader]::new($xaml)
+$window = [Windows.Markup.XamlReader]::Load($reader)
 
-$TabSecurity     = $Window.FindName("TabSecurity")
-$TabClean        = $Window.FindName("TabClean")
-$TabGaming       = $Window.FindName("TabGaming")
-$LogPanel        = $Window.FindName("LogPanel")
-$LogScroll       = $Window.FindName("LogScroll")
-$StatusBar       = $Window.FindName("StatusBar")
-$StatusRight     = $Window.FindName("StatusRight")
-$ScanProgress    = $Window.FindName("ScanProgress")
-$SysInfo         = $Window.FindName("SysInfo")
-$ClockText       = $Window.FindName("ClockText")
-$DateText        = $Window.FindName("DateText")
-$PanelSecurity   = $Window.FindName("PanelSecurity")
-$PanelClean      = $Window.FindName("PanelClean")
-$PanelGaming     = $Window.FindName("PanelGaming")
-$BtnRunSecurity  = $Window.FindName("BtnRunSecurity")
-$BtnFixAll       = $Window.FindName("BtnFixAll")
-$BtnOpenLog      = $Window.FindName("BtnOpenLog")
-$BtnRunClean     = $Window.FindName("BtnRunClean")
-$ChkDISM         = $Window.FindName("ChkDISM")
-$AdminWarning    = $Window.FindName("AdminWarning")
-$BtnElevate      = $Window.FindName("BtnElevate")
-$BtnGameCheck    = $Window.FindName("BtnGameCheck")
-$BtnGameApply    = $Window.FindName("BtnGameApply")
-$BtnGameRestore  = $Window.FindName("BtnGameRestore")
-$BackupStatus    = $Window.FindName("BackupStatus")
-$BtnKillProcs    = $Window.FindName("BtnKillProcs")
-$BtnPingTest     = $Window.FindName("BtnPingTest")
-$BtnSpeedTest    = $Window.FindName("BtnSpeedTest")
-$MonCpuPct       = $Window.FindName("MonCpuPct")
-$MonCpuBar       = $Window.FindName("MonCpuBar")
-$MonCpuInfo      = $Window.FindName("MonCpuInfo")
-$MonRamPct       = $Window.FindName("MonRamPct")
-$MonRamBar       = $Window.FindName("MonRamBar")
-$MonRamInfo      = $Window.FindName("MonRamInfo")
-$MonGpuPct       = $Window.FindName("MonGpuPct")
-$MonGpuBar       = $Window.FindName("MonGpuBar")
-$MonGpuInfo      = $Window.FindName("MonGpuInfo")
-$MonTempPct      = $Window.FindName("MonTempPct")
-$MonTempBar      = $Window.FindName("MonTempBar")
-$MonTempInfo     = $Window.FindName("MonTempInfo")
-$MonDiskBar      = $Window.FindName("MonDiskBar")
-$MonDiskSpace    = $Window.FindName("MonDiskSpace")
-$MonDiskIO       = $Window.FindName("MonDiskIO")
-$MonNetDown      = $Window.FindName("MonNetDown")
-$MonNetUp        = $Window.FindName("MonNetUp")
-$MonProc1        = $Window.FindName("MonProc1")
-$MonProc2        = $Window.FindName("MonProc2")
-$MonProc3        = $Window.FindName("MonProc3")
-$MonUptime       = $Window.FindName("MonUptime")
-$MonLastUpdate   = $Window.FindName("MonLastUpdate")
-$BtnVFX              = $Window.FindName("BtnVFX")
-$BtnFlushDNS         = $Window.FindName("BtnFlushDNS")
-$BtnResetNet         = $Window.FindName("BtnResetNet")
-$BtnClearShaders     = $Window.FindName("BtnClearShaders")
-$TabTweaks           = $Window.FindName("TabTweaks")
-$PanelTweaks         = $Window.FindName("PanelTweaks")
-$BtnTweakTelemetry   = $Window.FindName("BtnTweakTelemetry")
-$BtnTweakCortana     = $Window.FindName("BtnTweakCortana")
-$BtnTweakOneDrive    = $Window.FindName("BtnTweakOneDrive")
-$BtnTweakNotifs      = $Window.FindName("BtnTweakNotifs")
-$BtnTweakHibernate   = $Window.FindName("BtnTweakHibernate")
-$BtnTweakPowerThrot  = $Window.FindName("BtnTweakPowerThrot")
-$BtnTweakQoS         = $Window.FindName("BtnTweakQoS")
-$BtnTweakWin32Pri    = $Window.FindName("BtnTweakWin32Pri")
-$HealthScore         = $Window.FindName("HealthScore")
-$HealthDot           = $Window.FindName("HealthDot")
-$HealthStatus        = $Window.FindName("HealthStatus")
-$MonCpuSpark         = $Window.FindName("MonCpuSpark")
-$MonGpuSpark         = $Window.FindName("MonGpuSpark")
+function W { param($n) $window.FindName($n) }
 
-# ---- Color helpers ------------------------------------------------------
-$script:Brushes = @{}
-function Get-Brush { param($hex)
-    if (-not $script:Brushes[$hex]) {
-        $script:Brushes[$hex] = [Windows.Media.BrushConverter]::new().ConvertFromString($hex)
-    }
-    $script:Brushes[$hex]
+$TabSecurity  = W "TabSecurity"
+$TabClean     = W "TabClean"
+$TabGaming    = W "TabGaming"
+$TabTweaks    = W "TabTweaks"
+$TabHardware  = W "TabHardware"
+$TabProcesses = W "TabProcesses"
+$TabNetwork   = W "TabNetwork"
+$TabHistory   = W "TabHistory"
+
+$ModGaming    = W "ModGaming"
+$ModTrabajo   = W "ModTrabajo"
+$ModAhorro    = W "ModAhorro"
+$ModeLabel    = W "ModeLabel"
+
+$LogPanel         = W "LogPanel"
+$ProcPanel        = W "ProcPanel"
+$HwPanel          = W "HwPanel"
+$NetPanel         = W "NetPanel"
+$HistPanel        = W "HistPanel"
+$TweaksScrollView = W "TweaksScrollView"
+$ToolbarSecurity  = W "ToolbarSecurity"
+$ToolbarClean     = W "ToolbarClean"
+$ToolbarGaming    = W "ToolbarGaming"
+$ToolbarTweaks    = W "ToolbarTweaks"
+$ConsoleScroll    = W "ConsoleScroll"
+$ConsolePanel     = W "ConsolePanel"
+$StatusBar        = W "StatusBar"
+$JobStatus        = W "JobStatus"
+
+$BtnSecScan     = W "BtnSecScan"
+$BtnSecFix      = W "BtnSecFix"
+$BtnSecExport   = W "BtnSecExport"
+$BtnSecSchedule = W "BtnSecSchedule"
+$BtnClean       = W "BtnClean"
+$BtnCleanDism   = W "BtnCleanDism"
+$BtnRamClean    = W "BtnRamClean"
+$BtnGameApply   = W "BtnGameApply"
+$BtnGameRestore = W "BtnGameRestore"
+$BtnGameCheck   = W "BtnGameCheck"
+$BtnKillProcs   = W "BtnKillProcs"
+$BtnPingTest    = W "BtnPingTest"
+$BtnFlushDns    = W "BtnFlushDns"
+$BtnTelemetria      = W "BtnTelemetria"
+$BtnCortana         = W "BtnCortana"
+$BtnOneDrive        = W "BtnOneDrive"
+$BtnNotif           = W "BtnNotif"
+$BtnHibernate       = W "BtnHibernate"
+$BtnPowerThrottling = W "BtnPowerThrottling"
+$BtnQoS             = W "BtnQoS"
+$BtnWin32Pri        = W "BtnWin32Pri"
+$BtnStartupMgr      = W "BtnStartupMgr"
+$ProcSearch    = W "ProcSearch"
+$ProcList      = W "ProcList"
+$ProcCount     = W "ProcCount"
+$BtnProcRefresh= W "BtnProcRefresh"
+$BtnProcKill   = W "BtnProcKill"
+$BtnProcSuspend= W "BtnProcSuspend"
+$BtnHwRefresh  = W "BtnHwRefresh"
+$HwCpuName     = W "HwCpuName"
+$HwCpuCores    = W "HwCpuCores"
+$HwCpuSpeed    = W "HwCpuSpeed"
+$HwCpuSocket   = W "HwCpuSocket"
+$HwRamTotal    = W "HwRamTotal"
+$HwRamUsed     = W "HwRamUsed"
+$HwRamSlots    = W "HwRamSlots"
+$HwRamSpeed    = W "HwRamSpeed"
+$HwGpuName     = W "HwGpuName"
+$HwGpuVram     = W "HwGpuVram"
+$HwGpuDriver   = W "HwGpuDriver"
+$HwMoboName    = W "HwMoboName"
+$HwMoboMfg     = W "HwMoboMfg"
+$HwBiosVer     = W "HwBiosVer"
+$HwBiosDate    = W "HwBiosDate"
+$HwDiskInfo    = W "HwDiskInfo"
+$NetContent      = W "NetContent"
+$BtnNetRefresh   = W "BtnNetRefresh"
+$BtnNetConnTest  = W "BtnNetConnTest"
+$BtnNetTrace     = W "BtnNetTrace"
+$BtnNetFlushDns  = W "BtnNetFlushDns"
+$BtnNetReset     = W "BtnNetReset"
+$HistContent     = W "HistContent"
+$BtnHistRefresh  = W "BtnHistRefresh"
+$BtnHistClear    = W "BtnHistClear"
+$HealthDot    = W "HealthDot"
+$HealthScore  = W "HealthScore"
+$HealthStatus = W "HealthStatus"
+$MonCpuBar    = W "MonCpuBar"
+$MonCpuPct    = W "MonCpuPct"
+$MonCpuSpark  = W "MonCpuSpark"
+$MonCpuTemp   = W "MonCpuTemp"
+$MonRamBar    = W "MonRamBar"
+$MonRamPct    = W "MonRamPct"
+$MonRamUsed   = W "MonRamUsed"
+$MonGpuBar    = W "MonGpuBar"
+$MonGpuPct    = W "MonGpuPct"
+$MonGpuSpark  = W "MonGpuSpark"
+$MonGpuTemp   = W "MonGpuTemp"
+$MonDiskBar   = W "MonDiskBar"
+$MonDiskPct   = W "MonDiskPct"
+$MonDiskFree  = W "MonDiskFree"
+$MonDiskIO    = W "MonDiskIO"
+$MonNetDl     = W "MonNetDl"
+$MonNetUl     = W "MonNetUl"
+$MonProc1     = W "MonProc1"
+$MonProc2     = W "MonProc2"
+$MonProc3     = W "MonProc3"
+$MonUptime    = W "MonUptime"
+$MonOS        = W "MonOS"
+$MonHost      = W "MonHost"
+
+# ─── Console helpers ──────────────────────────────────────────────────────────
+$ColorMap = @{
+    "[OK]"   = "#44cc88"
+    "[WARN]" = "#ffaa00"
+    "[BAD]"  = "#ff4455"
+    "[CRIT]" = "#ff2244"
+    "[INFO]" = "#66aaff"
+    "[..]"   = "#aa88ff"
+    "[--]"   = "#555577"
+    "[!]"    = "#ffcc00"
+    "[!!]"   = "#ff8800"
 }
 
-function ColorOf-Line { param($line)
-    if ($line -match "^\s*\[OK\]")             { return "#33aa55" }
-    if ($line -match "^\s*\[XX\]|CRITICO")     { return "#cc3355" }
-    if ($line -match "^\s*\[!!\]")             { return "#cc8800" }
-    if ($line -match "^\s*>>" )                { return "#7733aa" }
-    if ($line -match "^\s*\[i\]|\[FIX\]")     { return "#443355" }
-    if ($line -match "^\s*\[P\]|\[--\]|^  --" ) { return "#332244" }
-    if ($line -match "REPORTE|^Equipo:")        { return "#7744bb" }
-    return "#553377"
-}
+$BrushConv = [Windows.Media.BrushConverter]::new()
 
-# ---- Monitor bar helpers ------------------------------------------------
-function Make-Bar { param([int]$pct, [int]$w=20)
-    $p = [Math]::Max(0,[Math]::Min(100,$pct))
-    $f = [math]::Round($p/100*$w)
-    ("█" * $f) + ("░" * ($w-$f))
-}
-function Bar-Color { param([int]$pct)
-    if ($pct -lt 50) { "#33cc66" }
-    elseif ($pct -lt 70) { "#99cc22" }
-    elseif ($pct -lt 85) { "#ddaa22" }
-    else { "#cc3355" }
-}
-function Format-BPS { param([double]$kbps)
-    if ($kbps -ge 1024) { return "$([math]::Round($kbps/1024,1)) MB/s" }
-    if ($kbps -ge 1)    { return "$([math]::Round($kbps,0)) KB/s" }
-    return "$([math]::Round($kbps*1024,0)) B/s"
-}
+function New-Brush { param($hex) $BrushConv.ConvertFrom($hex) }
 
-# ---- Log helpers --------------------------------------------------------
-function Add-LogLine {
-    param([string]$Text, [string]$Color = "#664488",
-          [switch]$Bold, [string]$FixCmd = "")
+function Print-Line { param($line)
+    $window.Dispatcher.Invoke([action]{
+        if ($line -match '^=SECTION=(.+)$') {
+            $tb = New-Object Windows.Controls.TextBlock
+            $tb.Text = "── $($Matches[1]) ──────────────────────────────────"
+            $tb.Foreground = New-Brush "#553377"
+            $tb.FontSize = 11
+            $tb.Margin = [Windows.Thickness]::new(0,10,0,4)
+            $null = $ConsolePanel.Children.Add($tb)
+        } elseif ($line -match '^\s*(\[[A-Z!\.]+\])\s+(.+)$') {
+            $tag = $Matches[1]; $msg = $Matches[2]
+            $hex = $ColorMap[$tag]; if (-not $hex) { $hex = "#ccbbee" }
 
-    $sp = New-Object Windows.Controls.StackPanel
-    $sp.Orientation = "Horizontal"
-    $sp.Margin      = "0,0,0,0"
+            $sp = New-Object Windows.Controls.StackPanel
+            $sp.Orientation = "Horizontal"
+            $sp.Margin = [Windows.Thickness]::new(0,1,0,0)
 
-    $tb = New-Object Windows.Controls.TextBlock
-    $tb.Text         = $Text
-    $tb.Foreground   = Get-Brush $Color
-    $tb.TextWrapping = "Wrap"
-    $tb.FontSize     = 11
-    $tb.MaxWidth     = 540
-    if ($Bold) { $tb.FontWeight = "SemiBold" }
-    $sp.Children.Add($tb) | Out-Null
+            $tagTb = New-Object Windows.Controls.TextBlock
+            $tagTb.Text = $tag
+            $tagTb.Foreground = New-Brush $hex
+            $tagTb.FontFamily = [Windows.Media.FontFamily]::new("Consolas")
+            $tagTb.FontSize = 12
+            $tagTb.Width = 52
+            $tagTb.Margin = [Windows.Thickness]::new(0,0,6,0)
 
-    if ($FixCmd) {
-        $btn             = New-Object Windows.Controls.Button
-        $btn.Content     = " fix "
-        $btn.Style       = $Window.Resources["BtnFix"]
-        $btn.Margin      = "8,0,0,0"
-        $btn.Tag         = $FixCmd
-        $btn.VerticalAlignment = "Center"
-        $btn.Add_Click({
-            param($s,$e)
-            $s.IsEnabled = $false; $s.Content = "..."
-            try {
-                & ([scriptblock]::Create($s.Tag)) | Out-Null
-                $s.Content = "[ok]"; $s.Background = Get-Brush "#1a7a3a"
-            } catch { $s.Content = "[err]" }
-        })
-        $sp.Children.Add($btn) | Out-Null
-    }
+            $msgTb = New-Object Windows.Controls.TextBlock
+            $msgTb.Text = $msg
+            $msgTb.Foreground = New-Brush "#ddd0ff"
+            $msgTb.FontSize = 12
+            $msgTb.TextWrapping = "Wrap"
 
-    $LogPanel.Children.Add($sp) | Out-Null
-    $LogScroll.ScrollToBottom()
-}
-
-function Add-LogSection { param([string]$Title)
-    $sp = New-Object Windows.Controls.StackPanel
-    $sp.Margin = "0,14,0,6"
-    $line = New-Object Windows.Controls.Rectangle
-    $line.Height = 1; $line.Fill = Get-Brush "#1a0028"; $line.Margin = "0,0,0,5"
-    $tb = New-Object Windows.Controls.TextBlock
-    $tb.Text       = $Title.ToUpper()
-    $tb.Foreground = Get-Brush "#440055"
-    $tb.FontSize   = 9
-    $tb.FontWeight = "Bold"
-    $sp.Children.Add($line) | Out-Null
-    $sp.Children.Add($tb)   | Out-Null
-    $LogPanel.Children.Add($sp) | Out-Null
-}
-
-function Add-SummaryCard { param([int]$Ok, [int]$Warn, [int]$Crit, [string]$Duration)
-    $bgHex = if ($Crit -gt 0){"#160008"} elseif ($Warn -gt 0){"#120010"} else {"#060e08"}
-    $bdHex = if ($Crit -gt 0){"#aa2255"} elseif ($Warn -gt 0){"#aaaa22"} else {"#225533"}
-
-    $outer = New-Object Windows.Controls.Border
-    $outer.Margin = "0,12,0,6"; $outer.Padding = "14,10"; $outer.CornerRadius = "4"
-    $outer.Background = Get-Brush $bgHex
-    $outer.BorderBrush = Get-Brush $bdHex; $outer.BorderThickness = "1"
-
-    $grid = New-Object Windows.Controls.Grid
-    for ($i=0;$i-lt4;$i++){$col=New-Object Windows.Controls.ColumnDefinition;$col.Width="1*";$grid.ColumnDefinitions.Add($col)}
-
-    function Add-Stat { param($g,$col,$val,$lbl,$clr)
-        $sp=New-Object Windows.Controls.StackPanel;$sp.HorizontalAlignment="Center"
-        [Windows.Controls.Grid]::SetColumn($sp,$col)
-        $n=New-Object Windows.Controls.TextBlock;$n.Text=$val;$n.FontSize=20
-        $n.FontWeight="Bold";$n.HorizontalAlignment="Center";$n.Foreground=Get-Brush $clr
-        $l=New-Object Windows.Controls.TextBlock;$l.Text=$lbl;$l.FontSize=9
-        $l.HorizontalAlignment="Center";$l.Foreground=Get-Brush "#440055"
-        $sp.Children.Add($n)|Out-Null;$sp.Children.Add($l)|Out-Null;$g.Children.Add($sp)|Out-Null
-    }
-    Add-Stat $grid 0 $Ok       "OK"       "#44bb66"
-    Add-Stat $grid 1 $Warn     "WARNINGS" "#ddaa22"
-    Add-Stat $grid 2 $Crit     "CRITICOS" "#cc3355"
-    Add-Stat $grid 3 $Duration "DURACION" "#9944cc"
-    $outer.Child = $grid
-    $LogPanel.Children.Add($outer) | Out-Null
-    $LogScroll.ScrollToBottom()
-}
-
-function Add-SpeedCard { param([double]$Down,[double]$Up,[int]$Lat,[int]$Jitter,[string]$Duration)
-    function Spd-Color { param([double]$m)
-        if ($m -ge 100){"#44ffaa"} elseif($m-ge50){"#44bb66"} elseif($m-ge20){"#99cc22"} elseif($m-ge5){"#ddaa22"} else{"#cc3355"}
-    }
-    function Spd-Label { param([double]$m)
-        if ($m -ge 100){"EXCELENTE"} elseif($m-ge50){"muy bueno"} elseif($m-ge20){"bueno"} elseif($m-ge5){"aceptable"} else{"lento"}
-    }
-    function Lat-Color { param([int]$ms)
-        if ($ms -lt 25){"#44ffaa"} elseif($ms-lt60){"#44bb66"} elseif($ms-lt100){"#ddaa22"} else{"#cc3355"}
-    }
-    function Lat-Label { param([int]$ms)
-        if ($ms -lt 25){"excelente"} elseif($ms-lt60){"bueno"} elseif($ms-lt100){"aceptable"} else{"alto"}
-    }
-    function Jit-Color { param([int]$j)
-        if ($j -lt 5){"#44bb66"} elseif($j-lt15){"#ddaa22"} else{"#cc3355"}
-    }
-    function Jit-Label { param([int]$j)
-        if ($j -lt 5){"estable"} elseif($j-lt15){"normal"} else{"inestable"}
-    }
-
-    $outer = New-Object Windows.Controls.Border
-    $outer.Margin = "0,14,0,6"; $outer.Padding = "16,14"; $outer.CornerRadius = "6"
-    $outer.Background = Get-Brush "#050810"
-    $outer.BorderBrush = Get-Brush "#1a3366"; $outer.BorderThickness = "1"
-
-    $root = New-Object Windows.Controls.StackPanel
-
-    $ttl = New-Object Windows.Controls.TextBlock
-    $ttl.Text = "SPEED TEST  //  CLOUDFLARE"; $ttl.FontSize = 10; $ttl.FontWeight = "Bold"
-    $ttl.HorizontalAlignment = "Center"; $ttl.Margin = "0,0,0,12"
-    $ttl.Foreground = Get-Brush "#2244aa"
-    $root.Children.Add($ttl) | Out-Null
-
-    $grid = New-Object Windows.Controls.Grid
-    for ($i=0;$i-lt4;$i++){ $c=New-Object Windows.Controls.ColumnDefinition; $c.Width="1*"; $grid.ColumnDefinitions.Add($c) }
-
-    function Add-SpeedStat { param($G,$Col,$Big,$Unit,$Lbl,$Sub,$Clr)
-        $cell = New-Object Windows.Controls.StackPanel; $cell.HorizontalAlignment="Center"
-        [Windows.Controls.Grid]::SetColumn($cell,$Col)
-        $vt = New-Object Windows.Controls.TextBlock; $vt.Text=$Big; $vt.FontSize=30; $vt.FontWeight="Bold"
-        $vt.HorizontalAlignment="Center"; $vt.Foreground=Get-Brush $Clr
-        $ut = New-Object Windows.Controls.TextBlock; $ut.Text=$Unit; $ut.FontSize=11; $ut.FontWeight="Bold"
-        $ut.HorizontalAlignment="Center"; $ut.Foreground=Get-Brush $Clr; $ut.Margin="0,-2,0,0"
-        $lt = New-Object Windows.Controls.TextBlock; $lt.Text=$Lbl; $lt.FontSize=9
-        $lt.HorizontalAlignment="Center"; $lt.Foreground=Get-Brush "#440055"; $lt.Margin="0,4,0,0"
-        $st = New-Object Windows.Controls.TextBlock; $st.Text=$Sub; $st.FontSize=8
-        $st.HorizontalAlignment="Center"; $st.Foreground=Get-Brush "#336622"
-        $cell.Children.Add($vt)|Out-Null; $cell.Children.Add($ut)|Out-Null
-        $cell.Children.Add($lt)|Out-Null; $cell.Children.Add($st)|Out-Null
-        $G.Children.Add($cell)|Out-Null
-    }
-
-    $dRound = [math]::Round($Down,1); $uRound = [math]::Round($Up,1)
-    Add-SpeedStat $grid 0 $dRound       "Mbps" "DESCARGA"  (Spd-Label $Down)   (Spd-Color $Down)
-    Add-SpeedStat $grid 1 $uRound       "Mbps" "SUBIDA"    (Spd-Label $Up)     (Spd-Color $Up)
-    Add-SpeedStat $grid 2 "$Lat"        "ms"   "LATENCIA"  (Lat-Label $Lat)    (Lat-Color $Lat)
-    Add-SpeedStat $grid 3 "$Jitter"     "ms"   "JITTER"    (Jit-Label $Jitter) (Jit-Color $Jitter)
-    $root.Children.Add($grid) | Out-Null
-
-    $sep = New-Object Windows.Controls.Border; $sep.Height=1; $sep.Margin="0,12,0,8"
-    $sep.Background=Get-Brush "#111a33"
-    $root.Children.Add($sep) | Out-Null
-
-    $foot = New-Object Windows.Controls.TextBlock
-    $foot.Text = "completado en $Duration  //  speed.cloudflare.com"
-    $foot.FontSize=9; $foot.HorizontalAlignment="Center"; $foot.Foreground=Get-Brush "#222840"
-    $root.Children.Add($foot) | Out-Null
-
-    $outer.Child = $root
-    $LogPanel.Children.Add($outer) | Out-Null
-    $LogScroll.ScrollToBottom()
-}
-
-function Clear-Log {
-    $LogPanel.Children.Clear()
-    while (-not $script:_PrintQueue.IsEmpty) {
-        $x = [hashtable]$null; $script:_PrintQueue.TryDequeue([ref]$x) | Out-Null
-    }
-}
-
-# ---- Print timer --------------------------------------------------------
-function Ensure-PrintTimer {
-    if ($script:_PrintTimer -and $script:_PrintTimer.IsEnabled) { return }
-    $script:_PrintTimer = New-Object Windows.Threading.DispatcherTimer
-    $script:_PrintTimer.Interval = [TimeSpan]::FromMilliseconds(75)
-    $script:_PrintTimer.Add_Tick({
-        $item = [hashtable]$null
-        if (-not $script:_PrintQueue.TryDequeue([ref]$item)) { return }
-        switch ($item.Type) {
-            "Line"    { Add-LogLine $item.Text $item.Color -FixCmd $item.Fix }
-            "Section" { Add-LogSection $item.Title }
-            "Summary"   { Add-SummaryCard $item.Ok $item.Warn $item.Crit $item.Duration }
-            "SpeedCard" { Add-SpeedCard $item.Down $item.Up $item.Lat $item.Jitter $item.Duration }
-            "Done"    {
-                $ScanProgress.Visibility = "Collapsed"
-                $StatusRight.Text = (Get-Date -Format "HH:mm:ss")
-                if ($item.OnDone -and $item.Result) { & $item.OnDone $item.Result }
-                elseif ($item.OnDone -and -not $item.Result) { & $item.OnDone $null }
-            }
+            $null = $sp.Children.Add($tagTb)
+            $null = $sp.Children.Add($msgTb)
+            $null = $ConsolePanel.Children.Add($sp)
+        } else {
+            $tb = New-Object Windows.Controls.TextBlock
+            $tb.Text = $line
+            $tb.Foreground = New-Brush "#776699"
+            $tb.FontSize = 11
+            $tb.Margin = [Windows.Thickness]::new(0,1,0,0)
+            $null = $ConsolePanel.Children.Add($tb)
         }
+        $ConsoleScroll.ScrollToBottom()
     })
-    $script:_PrintTimer.Start()
 }
 
-function Q-Line { param($text,$color,$fix="")
-    if ($text -match "^\s*\[OK\]")             { $script:_OkCount++ }
-    elseif ($text -match "^\s*\[!!\]")         { $script:_WarnCount++ }
-    elseif ($text -match "^\s*\[XX\]|CRITICO") { $script:_CritCount++ }
-    $script:_PrintQueue.Enqueue(@{Type="Line";Text=$text;Color=$color;Fix=$fix})
-}
-function Q-Section { param($title)
-    $script:_PrintQueue.Enqueue(@{Type="Section";Title=$title})
-}
-function Q-Done { param($result,$elapsed,$onDone)
-    $script:_PrintQueue.Enqueue(@{
-        Type="Summary";Ok=$script:_OkCount;Warn=$script:_WarnCount;
-        Crit=$script:_CritCount;Duration="${elapsed}s"
-    })
-    $script:_PrintQueue.Enqueue(@{Type="Done";Result=$result;OnDone=$onDone})
+function Console-Clear {
+    $window.Dispatcher.Invoke([action]{ $ConsolePanel.Children.Clear() })
 }
 
-function Show-Splash {
-    $script:_PrintQueue.Enqueue(@{Type="Line";Text="";Color="#330044";Fix=""})
-    foreach ($line in $script:AsciiSkull) {
-        $script:_PrintQueue.Enqueue(@{Type="Line";Text="  $line";Color="#7700bb";Fix=""})
+# ─── Tab switching ─────────────────────────────────────────────────────────────
+$NavBtnActive = $window.FindResource("NavBtnActive")
+$NavBtnStyle  = $window.FindResource("NavBtn")
+$NavButtons   = @($TabSecurity,$TabClean,$TabGaming,$TabTweaks,$TabHardware,$TabProcesses,$TabNetwork,$TabHistory)
+
+function Switch-Tab { param($name)
+    $script:_ActiveTab = $name
+    foreach ($b in $NavButtons) { $b.Style = $NavBtnStyle }
+
+    $LogPanel.Visibility         = "Collapsed"
+    $ProcPanel.Visibility        = "Collapsed"
+    $HwPanel.Visibility          = "Collapsed"
+    $NetPanel.Visibility         = "Collapsed"
+    $HistPanel.Visibility        = "Collapsed"
+    $TweaksScrollView.Visibility = "Collapsed"
+    $ConsoleScroll.Visibility    = "Collapsed"
+    $ToolbarSecurity.Visibility  = "Collapsed"
+    $ToolbarClean.Visibility     = "Collapsed"
+    $ToolbarGaming.Visibility    = "Collapsed"
+    $ToolbarTweaks.Visibility    = "Collapsed"
+
+    switch ($name) {
+        "Security"  {
+            $TabSecurity.Style = $NavBtnActive
+            $LogPanel.Visibility = "Visible"
+            $ConsoleScroll.Visibility = "Visible"
+            $ToolbarSecurity.Visibility = "Visible"
+        }
+        "Clean"     {
+            $TabClean.Style = $NavBtnActive
+            $LogPanel.Visibility = "Visible"
+            $ConsoleScroll.Visibility = "Visible"
+            $ToolbarClean.Visibility = "Visible"
+        }
+        "Gaming"    {
+            $TabGaming.Style = $NavBtnActive
+            $LogPanel.Visibility = "Visible"
+            $ConsoleScroll.Visibility = "Visible"
+            $ToolbarGaming.Visibility = "Visible"
+        }
+        "Tweaks"    {
+            $TabTweaks.Style = $NavBtnActive
+            $LogPanel.Visibility = "Visible"
+            $TweaksScrollView.Visibility = "Visible"
+            $ToolbarTweaks.Visibility = "Visible"
+        }
+        "Hardware"  {
+            $TabHardware.Style = $NavBtnActive
+            $HwPanel.Visibility = "Visible"
+            Load-HardwareInfo
+        }
+        "Processes" {
+            $TabProcesses.Style = $NavBtnActive
+            $ProcPanel.Visibility = "Visible"
+            Refresh-Processes
+        }
+        "Network"   {
+            $TabNetwork.Style = $NavBtnActive
+            $NetPanel.Visibility = "Visible"
+            Load-NetworkInfo
+        }
+        "History"   {
+            $TabHistory.Style = $NavBtnActive
+            $HistPanel.Visibility = "Visible"
+            Render-History
+        }
     }
-    $script:_PrintQueue.Enqueue(@{Type="Line";Text="";Color="#330044";Fix=""})
-    foreach ($line in $script:AsciiIRREBOY) {
-        $script:_PrintQueue.Enqueue(@{Type="Line";Text="  $line";Color="#cc66ff";Fix=""})
+}
+
+$TabSecurity.Add_Click({  Switch-Tab "Security"  })
+$TabClean.Add_Click({     Switch-Tab "Clean"     })
+$TabGaming.Add_Click({    Switch-Tab "Gaming"    })
+$TabTweaks.Add_Click({    Switch-Tab "Tweaks"    })
+$TabHardware.Add_Click({  Switch-Tab "Hardware"  })
+$TabProcesses.Add_Click({ Switch-Tab "Processes" })
+$TabNetwork.Add_Click({   Switch-Tab "Network"   })
+$TabHistory.Add_Click({   Switch-Tab "History"   })
+
+# ─── Mode profiles ─────────────────────────────────────────────────────────────
+$ModeBtnActive = $window.FindResource("ModeBtnActive")
+$ModeBtnStyle  = $window.FindResource("ModeBtn")
+
+function Set-Mode { param($mode)
+    $script:_ActiveMode = $mode
+    $ModGaming.Style = $ModTrabajo.Style = $ModAhorro.Style = $ModeBtnStyle
+    switch ($mode) {
+        "Gaming"  { $ModGaming.Style  = $ModeBtnActive; $ModeLabel.Text = "Modo: GAMING";  try { powercfg /setactive SCHEME_MIN } catch {} }
+        "Trabajo" { $ModTrabajo.Style = $ModeBtnActive; $ModeLabel.Text = "Modo: TRABAJO"; try { powercfg /setactive SCHEME_BALANCED } catch {} }
+        "Ahorro"  { $ModAhorro.Style  = $ModeBtnActive; $ModeLabel.Text = "Modo: AHORRO";  try { powercfg /setactive SCHEME_MAX } catch {} }
     }
-    $script:_PrintQueue.Enqueue(@{Type="Line";Text="";Color="#330044";Fix=""})
-    $script:_PrintQueue.Enqueue(@{Type="Line";Text="  [ PC TOOLKIT v3.0 ]   //   BY IRREBOY";Color="#aa44ff";Fix=""})
-    $script:_PrintQueue.Enqueue(@{Type="Line";Text="  -------------------------------------------";Color="#330044";Fix=""})
-    $adminTxt = if ($script:IsAdmin) { "  modo: ADMINISTRADOR" } else { "  modo: usuario normal  [Gaming boost limitado]" }
-    $adminClr = if ($script:IsAdmin) { "#44bb66" } else { "#ddaa22" }
-    $script:_PrintQueue.Enqueue(@{Type="Line";Text=$adminTxt;Color=$adminClr;Fix=""})
-    $script:_PrintQueue.Enqueue(@{Type="Line";Text="";Color="#330044";Fix=""})
+    Print-Line "  [OK]  Perfil activado: $mode"
 }
 
-# ---- Streaming engine ---------------------------------------------------
-function Read-StreamLines { param([string]$path)
-    if (-not (Test-Path $path)) { return @() }
-    try {
-        $fs = New-Object System.IO.FileStream($path,
-            [System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::ReadWrite)
-        $sr = New-Object System.IO.StreamReader($fs,[System.Text.Encoding]::UTF8)
-        $content = $sr.ReadToEnd(); $sr.Close(); $fs.Close()
-        return ($content -split "`r?`n")
-    } catch { return @() }
-}
+$ModGaming.Add_Click({  Set-Mode "Gaming"  })
+$ModTrabajo.Add_Click({ Set-Mode "Trabajo" })
+$ModAhorro.Add_Click({  Set-Mode "Ahorro"  })
 
-$script:_InitScript = { Set-ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue }
-
-function Invoke-StreamedJob {
-    param([string]$Label,[scriptblock]$Job,[object[]]$JobArgs,[scriptblock]$OnDone)
-
+# ─── Script runner (with streaming output) ────────────────────────────────────
+function Run-Script { param($scriptPath, [hashtable]$extraArgs = @{}, $onDone = $null, $label = "")
     if ($script:_Job -and $script:_Job.State -eq "Running") {
-        Q-Line "  [!!]  Ya hay una operacion en curso." "#ddaa22"; return
-    }
-
-    $script:_StreamFile  = [System.IO.Path]::GetTempFileName()
-    $script:_LastLineIdx = 0
-    $script:_OkCount = 0; $script:_WarnCount = 0; $script:_CritCount = 0
-    $script:_StartTime = Get-Date
-
-    $ScanProgress.Visibility = "Visible"
-    $StatusBar.Text = $Label
-
-    $allArgs = $JobArgs + @($script:_StreamFile)
-    $initSb  = $script:_InitScript
-    $script:_Job = Start-Job -InitializationScript $initSb -ScriptBlock $Job -ArgumentList $allArgs
-
-    if ($script:_Timer -and $script:_Timer.IsEnabled) { $script:_Timer.Stop() }
-
-    $onDoneCapture = $OnDone
-    $script:_Timer = New-Object Windows.Threading.DispatcherTimer
-    $script:_Timer.Interval = [TimeSpan]::FromMilliseconds(120)
-    $script:_Timer.Add_Tick({
-        if ($script:_StreamFile) {
-            $lines = Read-StreamLines $script:_StreamFile
-            for ($i = $script:_LastLineIdx; $i -lt $lines.Count; $i++) {
-                $l = $lines[$i]; if (-not $l.Trim()) { $script:_LastLineIdx++; continue }
-                if ($l -match "^=SECTION=(.+)") { Q-Section $matches[1].Trim() }
-                else {
-                    $fixCmd = ""
-                    foreach ($a in $script:LastAlerts) {
-                        if ($a.FixCmd -and $l.Length -gt 5) {
-                            $snip = $a.Msg -replace '[^\w ]',''; $snip = $snip.Substring(0,[Math]::Min(15,$snip.Length))
-                            if ($snip -and $l -match [regex]::Escape($snip)) { $fixCmd = $a.FixCmd; break }
-                        }
-                    }
-                    Q-Line $l (ColorOf-Line $l) $fixCmd
-                }
-                $script:_LastLineIdx++
-            }
-        }
-        if ($script:_Job -and $script:_Job.State -in "Completed","Failed","Stopped") {
-            $script:_Timer.Stop()
-            if ($script:_StreamFile) {
-                $lines = Read-StreamLines $script:_StreamFile
-                for ($i = $script:_LastLineIdx; $i -lt $lines.Count; $i++) {
-                    $l = $lines[$i]; if (-not $l.Trim()) { continue }
-                    if ($l -match "^=SECTION=(.+)") { Q-Section $matches[1].Trim() }
-                    else { Q-Line $l (ColorOf-Line $l) }
-                }
-                Remove-Item $script:_StreamFile -ErrorAction SilentlyContinue
-                $script:_StreamFile = ""
-            }
-            $result = $null
-            try { $result = Receive-Job $script:_Job -ErrorAction Stop }
-            catch {
-                $errMsg = $_.ToString()
-                Q-Line "  [XX]  Error en job: $errMsg" "#cc3355"
-                Q-Line "  [i]   Revisa que el script exista y tenga permisos." "#9944cc"
-            }
-            Remove-Job $script:_Job -ErrorAction SilentlyContinue
-            $script:_Job = $null
-            $elapsed = [math]::Round(((Get-Date)-$script:_StartTime).TotalSeconds,1)
-            Q-Done $result $elapsed $onDoneCapture
-        }
-    })
-    $script:_Timer.Start()
-}
-
-# ---- Monitor job --------------------------------------------------------
-function Start-MonitorJob {
-    if ($script:_MonJob) { return }
-    $script:_MonStream = [System.IO.Path]::GetTempFileName()
-    $sf = $script:_MonStream
-
-    $script:_MonJob = Start-Job -InitializationScript { Set-ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue } -ScriptBlock {
-        param($sf)
-        function W { param($l)
-            try {
-                $fs = New-Object System.IO.FileStream($sf,
-                    [System.IO.FileMode]::Append,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite)
-                $sw = New-Object System.IO.StreamWriter($fs,[System.Text.Encoding]::UTF8)
-                $sw.WriteLine($l); $sw.Flush(); $sw.Close()
-            } catch {}
-        }
-
-        $iter = 0
-        while ($true) {
-            # CPU
-            $cpu = 0
-            try { $cpu = [math]::Round((Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop).PercentProcessorTime) } catch {}
-            W "|M|cpu=$cpu"
-
-            # RAM
-            $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-            if ($os) {
-                $free = [math]::Round($os.FreePhysicalMemory/1MB,1)
-                $tot  = [math]::Round($os.TotalVisibleMemorySize/1MB,1)
-                $used = [math]::Round($tot-$free,1)
-                $pct  = [math]::Round($used/$tot*100)
-                W "|M|ram=$pct|ramUsed=$used|ramTot=$tot"
-            }
-
-            # GPU
-            try {
-                $gs = (Get-Counter '\GPU Engine(*engtype_3D*)\Utilization Percentage' -ErrorAction Stop).CounterSamples
-                $gp = [Math]::Min(100,[math]::Round(($gs|Measure-Object CookedValue -Sum).Sum))
-            } catch { $gp = -1 }
-            W "|M|gpu=$gp"
-
-            # TEMP
-            try {
-                $tk = (Get-CimInstance -Namespace 'root/wmi' -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop).CurrentTemperature
-                $tc = [math]::Round(($tk|Measure-Object -Maximum).Maximum/10-273.15)
-            } catch { $tc = -1 }
-            W "|M|temp=$tc"
-
-            # DISK IO
-            try {
-                $dk = Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -Filter "Name='_Total'" -ErrorAction Stop
-                $dR = [math]::Round($dk.DiskReadBytesPersec/1MB,1)
-                $dW = [math]::Round($dk.DiskWriteBytesPersec/1MB,1)
-            } catch { $dR=0; $dW=0 }
-            W "|M|diskR=$dR|diskW=$dW"
-
-            # NETWORK
-            try {
-                $nk = Get-CimInstance Win32_PerfFormattedData_Tcpip_NetworkInterface -ErrorAction Stop
-                $nR = [math]::Round(($nk|Measure-Object BytesReceivedPersec -Sum).Sum/1KB,1)
-                $nT = [math]::Round(($nk|Measure-Object BytesSentPersec -Sum).Sum/1KB,1)
-            } catch { $nR=0; $nT=0 }
-            W "|M|netRx=$nR|netTx=$nT"
-
-            # TOP PROCESSES (every 4 iterations = 8s)
-            if ($iter % 4 -eq 0) {
-                try {
-                    $nc = [System.Environment]::ProcessorCount
-                    $procs = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction Stop |
-                        Where-Object { $_.Name -ne '_Total' -and $_.Name -ne 'Idle' } |
-                        Sort-Object PercentProcessorTime -Descending |
-                        Select-Object -First 3
-                    $pi = 0
-                    foreach ($p in $procs) {
-                        $pct2 = [math]::Min(100,[math]::Round($p.PercentProcessorTime / [Math]::Max(1,$nc)))
-                        W "|M|proc${pi}n=$($p.Name)|proc${pi}c=$pct2"
-                        $pi++
-                    }
-                } catch {}
-            }
-
-            # DISK SPACE + UPTIME (every 15 iterations = 30s)
-            if ($iter % 15 -eq 0) {
-                try {
-                    $drv = Get-PSDrive C -ErrorAction Stop
-                    $usedGB = [math]::Round($drv.Used/1GB,0)
-                    $freeGB = [math]::Round($drv.Free/1GB,0)
-                    $totGB  = $usedGB + $freeGB
-                    $dpct   = if ($totGB -gt 0) { [math]::Round($usedGB/$totGB*100) } else { 0 }
-                    W "|M|diskPct=$dpct|diskUsedGB=$usedGB|diskFreeGB=$freeGB|diskTotGB=$totGB"
-                } catch {}
-
-                try {
-                    $os2 = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
-                    $up  = (Get-Date) - $os2.LastBootUpTime
-                    $upStr = if ($up.Days -gt 0) { "$($up.Days)d $($up.Hours)h $($up.Minutes)m" }
-                             elseif ($up.Hours -gt 0) { "$($up.Hours)h $($up.Minutes)m" }
-                             else { "$($up.Minutes)m $($up.Seconds)s" }
-                    W "|M|uptime=$upStr"
-                } catch {}
-            }
-
-            $iter++
-            Start-Sleep -Seconds 2
-        }
-    } -ArgumentList $sf
-
-    $script:_MonTimer = New-Object Windows.Threading.DispatcherTimer
-    $script:_MonTimer.Interval = [TimeSpan]::FromSeconds(2)
-    $script:_MonTimer.Add_Tick({ Update-MonitorDisplay })
-    $script:_MonTimer.Start()
-}
-
-function Update-MonitorDisplay {
-    if (-not $script:_MonStream -or -not (Test-Path $script:_MonStream)) { return }
-    try {
-        $fs = New-Object System.IO.FileStream($script:_MonStream,
-            [System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::ReadWrite)
-        $sr = New-Object System.IO.StreamReader($fs,[System.Text.Encoding]::UTF8)
-        $cnt = $sr.ReadToEnd(); $sr.Close(); $fs.Close()
-    } catch { return }
-
-    foreach ($line in ($cnt -split "`r?`n")) {
-        if ($line -match "^\|M\|") {
-            foreach ($kv in ($line.Substring(3) -split '\|')) {
-                if ($kv -match '^([^=]+)=(.+)$') { $script:_MonData[$matches[1]] = $matches[2] }
-            }
-        }
-    }
-
-    $d = $script:_MonData
-
-    # CPU
-    if ($null -ne $d["cpu"]) {
-        $p = [int]$d["cpu"]
-        $c = Bar-Color $p
-        $MonCpuBar.Text       = Make-Bar $p
-        $MonCpuBar.Foreground = Get-Brush $c
-        $MonCpuPct.Text       = "$p%"
-        $MonCpuPct.Foreground = Get-Brush $c
-        $MonCpuInfo.Text      = "procesador principal"
-    }
-
-    # RAM
-    if ($null -ne $d["ram"]) {
-        $p = [int]$d["ram"]
-        $c = Bar-Color $p
-        $MonRamBar.Text       = Make-Bar $p
-        $MonRamBar.Foreground = Get-Brush $c
-        $MonRamPct.Text       = "$p%"
-        $MonRamPct.Foreground = Get-Brush $c
-        $MonRamInfo.Text      = "$($d['ramUsed']) GB / $($d['ramTot']) GB"
-    }
-
-    # GPU
-    if ($null -ne $d["gpu"]) {
-        $p = [int]$d["gpu"]
-        if ($p -ge 0) {
-            $c = Bar-Color $p
-            $MonGpuBar.Text       = Make-Bar $p
-            $MonGpuBar.Foreground = Get-Brush $c
-            $MonGpuPct.Text       = "$p%"
-            $MonGpuPct.Foreground = Get-Brush $c
-            $MonGpuInfo.Text      = "GPU 3D engine"
-        } else {
-            $MonGpuBar.Text = "░░░░░░░░░░░░░░░░░░░░"
-            $MonGpuPct.Text = "n/a"
-            $MonGpuInfo.Text = "driver sin soporte PDH"
-        }
-    }
-
-    # TEMP
-    if ($null -ne $d["temp"]) {
-        $t = [int]$d["temp"]
-        if ($t -ge 0) {
-            $p = [Math]::Min(100,[math]::Round($t/110*100))
-            $c = Bar-Color $p
-            $MonTempBar.Text       = Make-Bar $p
-            $MonTempBar.Foreground = Get-Brush $c
-            $MonTempPct.Text       = "${t}°C"
-            $MonTempPct.Foreground = Get-Brush $c
-            $st = if ($t -lt 60){"OK - sistema frio"} elseif ($t -lt 80){"CALIENTE - considera limpieza"} else {"CRITICO - revisa ventilacion"}
-            $MonTempInfo.Text      = $st
-            $MonTempInfo.Foreground = Get-Brush $c
-        } else {
-            $MonTempBar.Text = "░░░░░░░░░░░░░░░░░░░░"
-            $MonTempPct.Text = "--"
-            $MonTempInfo.Text = "sensor no disponible"
-        }
-    }
-
-    # DISK IO
-    if ($null -ne $d["diskR"]) {
-        $rStr = if ([double]$d['diskR'] -gt 0) { "$($d['diskR']) MB/s" } else { "0 MB/s" }
-        $wStr = if ([double]$d['diskW'] -gt 0) { "$($d['diskW']) MB/s" } else { "0 MB/s" }
-        $MonDiskIO.Text = "R $rStr    W $wStr"
-    }
-
-    # DISK SPACE
-    if ($null -ne $d["diskPct"]) {
-        $p = [int]$d["diskPct"]
-        $c = Bar-Color $p
-        $MonDiskBar.Text       = Make-Bar $p
-        $MonDiskBar.Foreground = Get-Brush $c
-        $MonDiskSpace.Text     = "$($d['diskUsedGB']) GB usado  /  $($d['diskTotGB']) GB total  ($p%)"
-    }
-
-    # NETWORK
-    if ($null -ne $d["netRx"]) {
-        $rx = [double]$d["netRx"]; $tx = [double]$d["netTx"]
-        $rxC = if ($rx -gt 512) { "#ddaa22" } else { "#4a2266" }
-        $txC = if ($tx -gt 512) { "#ddaa22" } else { "#4a2266" }
-        $MonNetDown.Text       = "↓  $(Format-BPS $rx)"
-        $MonNetUp.Text         = "↑  $(Format-BPS $tx)"
-        $MonNetDown.Foreground = Get-Brush $rxC
-        $MonNetUp.Foreground   = Get-Brush $txC
-    }
-
-    # TOP PROCESSES
-    $procTexts = @($MonProc1,$MonProc2,$MonProc3)
-    for ($pi=0; $pi -lt 3; $pi++) {
-        $n = $d["proc${pi}n"]; $c2 = $d["proc${pi}c"]
-        if ($n -and $c2) {
-            $pct3 = [int]$c2
-            $barC = Bar-Color $pct3
-            $nameShort = if ($n.Length -gt 16) { $n.Substring(0,14)+".." } else { $n }
-            $procTexts[$pi].Text       = "$nameShort  $pct3%"
-            $procTexts[$pi].Foreground = Get-Brush $barC
-        }
-    }
-
-    # UPTIME
-    if ($null -ne $d["uptime"]) {
-        $MonUptime.Text = "uptime: $($d['uptime'])"
-    }
-
-    # CPU SPARKLINE
-    if ($null -ne $d["cpu"]) {
-        $script:_CpuHistory.Add([int]$d["cpu"])
-        while ($script:_CpuHistory.Count -gt 22) { $script:_CpuHistory.RemoveAt(0) }
-        $MonCpuSpark.Text = ($script:_CpuHistory | ForEach-Object {
-            "▁▂▃▄▅▆▇█"[[math]::Min(7,[math]::Floor($_ / 100.0 * 8))]
-        }) -join ""
-        $MonCpuSpark.Foreground = Get-Brush "#220033"
-    }
-    # GPU SPARKLINE
-    if ($null -ne $d["gpu"] -and [int]$d["gpu"] -ge 0) {
-        $script:_GpuHistory.Add([int]$d["gpu"])
-        while ($script:_GpuHistory.Count -gt 22) { $script:_GpuHistory.RemoveAt(0) }
-        $MonGpuSpark.Text = ($script:_GpuHistory | ForEach-Object {
-            "▁▂▃▄▅▆▇█"[[math]::Min(7,[math]::Floor($_ / 100.0 * 8))]
-        }) -join ""
-        $MonGpuSpark.Foreground = Get-Brush "#220033"
-    }
-    # HEALTH SCORE
-    $hScore = 100
-    if ($null -ne $d["ram"]) {
-        $rp = [int]$d["ram"]
-        if ($rp -gt 85) { $hScore -= 20 } elseif ($rp -gt 70) { $hScore -= 10 } elseif ($rp -gt 50) { $hScore -= 5 }
-    }
-    if ($null -ne $d["temp"] -and [int]$d["temp"] -ge 0) {
-        $tp = [int]$d["temp"]
-        if ($tp -gt 85) { $hScore -= 25 } elseif ($tp -gt 70) { $hScore -= 10 } elseif ($tp -gt 60) { $hScore -= 5 }
-        # TEMP ALERT
-        if ($tp -gt 85 -and $script:_Tray) {
-            $script:_Tray.ShowBalloonTip(5000, "PC Toolkit  ALERTA", "Temperatura critica: ${tp}C - revisa ventilacion", [System.Windows.Forms.ToolTipIcon]::Warning)
-        }
-    }
-    $hScore -= [math]::Min(30, $script:_HealthSecCrit * 15)
-    $hScore -= [math]::Min(15, $script:_HealthSecWarn * 3)
-    $hScore = [math]::Max(0, [math]::Min(100, $hScore))
-    $hClr = if ($hScore -ge 80) { "#44bb66" } elseif ($hScore -ge 60) { "#ddaa22" } else { "#cc3355" }
-    $hLabel = if ($hScore -ge 80) { "sistema saludable" } elseif ($hScore -ge 60) { "atencion requerida" } else { "estado critico" }
-    if ($HealthScore) {
-        $HealthScore.Text       = "$hScore"
-        $HealthScore.Foreground = Get-Brush $hClr
-        $HealthDot.Foreground   = Get-Brush $hClr
-        $HealthStatus.Text      = "  $hLabel"
-        $HealthStatus.Foreground = Get-Brush $hClr
-    }
-    $MonLastUpdate.Text = "update: $(Get-Date -Format 'HH:mm:ss')"
-}
-
-# ---- Tray ---------------------------------------------------------------
-function Setup-Tray {
-    $ni = New-Object System.Windows.Forms.NotifyIcon
-    try {
-        $bmp = New-Object System.Drawing.Bitmap 16,16
-        $g   = [System.Drawing.Graphics]::FromImage($bmp)
-        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $br  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(153,34,204))
-        $g.FillEllipse($br,1,1,14,14); $g.Dispose()
-        $ni.Icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
-    } catch { $ni.Icon = [System.Drawing.SystemIcons]::Application }
-    $ni.Text = "PC Toolkit // IRREBOY"; $ni.Visible = $true
-
-    $ctx   = New-Object System.Windows.Forms.ContextMenuStrip
-    $mShow = $ctx.Items.Add("[>]  Mostrar")
-    $mShow.ForeColor = [System.Drawing.Color]::MediumPurple
-    $mShow.Add_Click({ $Window.Show(); $Window.WindowState = "Normal"; $Window.Activate() })
-    $mScan = $ctx.Items.Add("[S]  Escanear Seguridad")
-    $mScan.Add_Click({
-        $Window.Show(); $Window.WindowState = "Normal"; Switch-Tab "Security"
-        $BtnRunSecurity.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
-    })
-    $mClean = $ctx.Items.Add("[C]  Limpiar PC")
-    $mClean.Add_Click({
-        $Window.Show(); $Window.WindowState = "Normal"; Switch-Tab "Clean"
-        $BtnRunClean.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
-    })
-    $mGaming = $ctx.Items.Add("[G]  Gaming Boost  ON/OFF")
-    $mGaming.Add_Click({
-        $Window.Show(); $Window.WindowState = "Normal"; Switch-Tab "Gaming"
-        if (Test-Path "$ScriptsDir\GameBoost_Backup.json") {
-            $BtnGameRestore.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
-        } else {
-            $BtnGameApply.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
-        }
-    })
-    $ctx.Items.Add("-") | Out-Null
-    $mExit = $ctx.Items.Add("[X]  Salir")
-    $mExit.Add_Click({
-        $script:_TrayExit = $true
-        if ($script:_MonJob) { Stop-Job $script:_MonJob -ErrorAction SilentlyContinue; Remove-Job $script:_MonJob -ErrorAction SilentlyContinue }
-        $ni.Visible = $false; $ni.Dispose(); $Window.Close()
-    })
-    $ni.ContextMenuStrip = $ctx
-    $ni.Add_DoubleClick({ $Window.Show(); $Window.WindowState = "Normal"; $Window.Activate() })
-    $script:_Tray = $ni
-
-    $Window.Add_Closing({
-        param($s,$e)
-        if (-not $script:_TrayExit) { $e.Cancel = $true; $Window.Hide() }
-    })
-}
-
-# ---- Tabs ---------------------------------------------------------------
-function Switch-Tab { param([string]$Tab)
-    $script:ActiveTab = $Tab
-    $off = $Window.Resources["SideTabBtn"]
-    $on  = $Window.Resources["SideTabActive"]
-    $TabSecurity.Style = $off; $TabClean.Style = $off; $TabGaming.Style = $off; $TabTweaks.Style = $off
-    $PanelSecurity.Visibility = "Collapsed"
-    $PanelClean.Visibility    = "Collapsed"
-    $PanelGaming.Visibility   = "Collapsed"
-    $PanelTweaks.Visibility   = "Collapsed"
-    switch ($Tab) {
-        "Security" { $TabSecurity.Style = $on; $PanelSecurity.Visibility = "Visible" }
-        "Clean"    { $TabClean.Style    = $on; $PanelClean.Visibility    = "Visible" }
-        "Tweaks"   { $TabTweaks.Style   = $on; $PanelTweaks.Visibility   = "Visible" }
-        "Gaming"   {
-            $TabGaming.Style = $on; $PanelGaming.Visibility = "Visible"
-            if (-not $script:IsAdmin) {
-                $AdminWarning.Visibility = "Visible"
-            } else {
-                $AdminWarning.Visibility = "Collapsed"
-            }
-            $bk = "$ScriptsDir\GameBoost_Backup.json"
-            if (Test-Path $bk) {
-                $d = (Get-Content $bk -Raw | ConvertFrom-Json).Timestamp
-                $BackupStatus.Text = "backup: $($d.Substring(0,10))"; $BackupStatus.Foreground = Get-Brush "#44bb66"
-            } else {
-                $BackupStatus.Text = "sin backup"; $BackupStatus.Foreground = Get-Brush "#440033"
-            }
-        }
-    }
-}
-
-$TabSecurity.Add_Click({ Switch-Tab "Security" })
-$TabClean.Add_Click({    Switch-Tab "Clean" })
-$TabGaming.Add_Click({   Switch-Tab "Gaming" })
-$TabTweaks.Add_Click({   Switch-Tab "Tweaks" })
-
-# ---- ELEVATE ------------------------------------------------------------
-$BtnElevate.Add_Click({
-    $thisScript = "$ScriptsDir\PCToolkit.ps1"
-    try {
-        Start-Process powershell.exe `
-            -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$thisScript`"" `
-            -Verb RunAs
-        $script:_TrayExit = $true
-        if ($script:_Tray) { $script:_Tray.Visible = $false; $script:_Tray.Dispose() }
-        $Window.Close()
-    } catch {
-        Add-LogLine "  [!!]  UAC cancelado o no disponible: $_" "#ddaa22"
-    }
-})
-
-# ---- TWEAKS -------------------------------------------------------------
-$BtnTweakTelemetry.Add_Click({
-    Add-LogSection "TELEMETRIA"
-    try {
-        $p = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
-        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
-        Set-ItemProperty $p -Name "AllowTelemetry" -Value 0 -Type DWord
-        Stop-Service "DiagTrack"       -Force -ErrorAction SilentlyContinue
-        Set-Service  "DiagTrack"       -StartupType Disabled -ErrorAction SilentlyContinue
-        Stop-Service "dmwappushservice" -Force -ErrorAction SilentlyContinue
-        Set-Service  "dmwappushservice" -StartupType Disabled -ErrorAction SilentlyContinue
-        Add-LogLine "  [OK]  Telemetria desactivada (AllowTelemetry=0)" "#44bb66"
-        Add-LogLine "  [OK]  Servicios DiagTrack y dmwappushservice detenidos" "#44bb66"
-        Add-LogLine "  [i]   Requiere admin para modificar servicios" "#9944cc"
-        $StatusBar.Text = "telemetria: desactivada."
-    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
-})
-
-$BtnTweakCortana.Add_Click({
-    Add-LogSection "CORTANA"
-    try {
-        $p = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"
-        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
-        Set-ItemProperty $p -Name "AllowCortana" -Value 0 -Type DWord
-        Add-LogLine "  [OK]  Cortana desactivada via GPO" "#44bb66"
-        Add-LogLine "  [i]   Efecto visible tras cerrar sesion" "#9944cc"
-        $StatusBar.Text = "Cortana: desactivada."
-    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
-})
-
-$BtnTweakOneDrive.Add_Click({
-    Add-LogSection "ONEDRIVE STARTUP"
-    try {
-        Remove-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "OneDrive" -ErrorAction SilentlyContinue
-        Add-LogLine "  [OK]  OneDrive eliminado del autoarranque" "#44bb66"
-        Add-LogLine "  [i]   OneDrive no se desinstala, solo deja de iniciar con Windows" "#9944cc"
-        $StatusBar.Text = "OneDrive: removido de startup."
-    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
-})
-
-$BtnTweakNotifs.Add_Click({
-    Add-LogSection "NOTIFICACIONES"
-    try {
-        $p = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\PushNotifications"
-        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
-        Set-ItemProperty $p -Name "ToastEnabled" -Value 0 -Type DWord
-        Add-LogLine "  [OK]  Notificaciones Toast desactivadas" "#44bb66"
-        Add-LogLine "  [i]   Cierra sesion y vuelve a entrar para aplicar" "#9944cc"
-        $StatusBar.Text = "notificaciones: desactivadas."
-    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
-})
-
-$BtnTweakHibernate.Add_Click({
-    $r = [System.Windows.MessageBox]::Show(
-        "Desactivar hibernacion?`n`nLibera hiberfil.sys (puede ser varios GB).`nRequiere reinicio para eliminar el archivo.",
-        "Hibernate OFF","YesNo","Question")
-    if ($r -ne "Yes") { return }
-    Add-LogSection "HIBERNATE"
-    try {
-        & powercfg /h off 2>&1 | Out-Null
-        Add-LogLine "  [OK]  Hibernacion desactivada" "#44bb66"
-        Add-LogLine "  [i]   hiberfil.sys sera eliminado al reiniciar" "#9944cc"
-        $StatusBar.Text = "hibernate: desactivado."
-    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
-})
-
-$BtnTweakPowerThrot.Add_Click({
-    Add-LogSection "POWER THROTTLING"
-    try {
-        $p = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling"
-        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
-        Set-ItemProperty $p -Name "PowerThrottlingOff" -Value 1 -Type DWord
-        Add-LogLine "  [OK]  Power Throttling desactivado" "#44bb66"
-        Add-LogLine "  [i]   CPU no limitara velocidad de apps en segundo plano" "#9944cc"
-        $StatusBar.Text = "power throttling: desactivado."
-    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
-})
-
-$BtnTweakQoS.Add_Click({
-    Add-LogSection "QoS BANDWIDTH"
-    try {
-        $p = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched"
-        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
-        Set-ItemProperty $p -Name "NonBestEffortLimit" -Value 0 -Type DWord
-        Add-LogLine "  [OK]  Limite QoS desactivado (100% del ancho de banda disponible)" "#44bb66"
-        Add-LogLine "  [i]   Windows reserva 20% por defecto, ahora es 0%" "#9944cc"
-        $StatusBar.Text = "QoS bandwidth: 100% liberado."
-    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
-})
-
-$BtnTweakWin32Pri.Add_Click({
-    Add-LogSection "WIN32 PRIORITY"
-    try {
-        Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" `
-            -Name "Win32PrioritySeparation" -Value 0x26 -Type DWord
-        Add-LogLine "  [OK]  Win32PrioritySeparation = 0x26 (modo gaming)" "#44bb66"
-        Add-LogLine "  [i]   CPU prioriza la app en foco al maximo" "#9944cc"
-        Add-LogLine "  [i]   Reinicia para aplicar completamente" "#9944cc"
-        $StatusBar.Text = "win32 priority: modo gaming."
-    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
-})
-
-# ---- SECURITY -----------------------------------------------------------
-$BtnRunSecurity.Add_Click({
-    Add-LogSection "SEGURIDAD"
-    Add-LogLine ">> iniciando chequeo de seguridad..." "#9922cc" -Bold
-    $BtnRunSecurity.IsEnabled = $false; $BtnFixAll.IsEnabled = $false; $BtnOpenLog.IsEnabled = $false
-    $dir = $ScriptsDir
-    Invoke-StreamedJob -Label "escaneando sistema..." `
-        -Job { param($d,$sf) & "$d\SecurityCheck.ps1" -Silent -StreamFile $sf } `
-        -JobArgs @($dir) `
-        -OnDone {
-            param($resultRaw)
-            # SecurityCheck returns strings + PSCustomObject; extract the object
-            $result = if ($resultRaw -is [array]) {
-                $resultRaw | Where-Object { $_ -is [PSCustomObject] -and $_.PSObject.Properties['Alerts'] } | Select-Object -Last 1
-            } else { $resultRaw }
-
-            if ($result -and $result.PSObject.Properties['Alerts']) {
-                $script:LastAlerts = $result.Alerts; $script:LastLogFile = $result.LogFile
-                $script:_HealthSecCrit = ($result.Alerts | Where-Object { $_.Level -eq "CRIT" }).Count
-                $script:_HealthSecWarn = ($result.Alerts | Where-Object { $_.Level -eq "WARN" }).Count
-                $n = $result.Alerts.Count
-                if ($n -gt 0) {
-                    $BtnFixAll.IsEnabled = $true
-                    $StatusBar.Text = "$n alerta(s) - usa [!] APLICAR FIXES o los botones 'fix' junto a cada linea."
-                } else {
-                    $StatusBar.Text = "sistema limpio. Sin alertas."
-                }
-                $BtnOpenLog.IsEnabled = $true
-            } else {
-                $StatusBar.Text = "chequeo completado."
-                $BtnOpenLog.IsEnabled = $true
-            }
-            $BtnRunSecurity.IsEnabled = $true
-        }
-})
-
-$BtnFixAll.Add_Click({
-    $fixables = $script:LastAlerts | Where-Object { $_.FixCmd }
-    if (-not $fixables) { $StatusBar.Text = "sin fixes disponibles."; return }
-    $BtnFixAll.IsEnabled = $false
-    Add-LogSection "APLICANDO FIXES"
-    $count = 0
-    foreach ($a in $fixables) {
-        try {
-            Add-LogLine "  [i]   aplicando: $($a.Msg)" "#9944cc"
-            & ([scriptblock]::Create($a.FixCmd)) | Out-Null
-            Add-LogLine "  [OK]  fix aplicado: $($a.Msg)" "#44bb66"
-            $count++
-        } catch {
-            Add-LogLine "  [XX]  error en fix: $($a.Msg) - $_" "#cc3355"
-        }
-    }
-    Add-LogLine "  [OK]  $count fix(es) aplicado(s). Vuelve a escanear para verificar." "#44bb66"
-    $StatusBar.Text = "$count fix(es) aplicado(s). Ejecuta el chequeo de nuevo para verificar."
-    $BtnRunSecurity.IsEnabled = $true
-    $BtnFixAll.IsEnabled = $false
-})
-
-$BtnOpenLog.Add_Click({
-    if ($script:LastLogFile -and (Test-Path $script:LastLogFile)) { Start-Process notepad.exe $script:LastLogFile }
-})
-
-# ---- CLEAN --------------------------------------------------------------
-$BtnRunClean.Add_Click({
-    Add-LogSection "LIMPIEZA"
-    Add-LogLine ">> iniciando limpieza de PC..." "#9922cc" -Bold
-    $BtnRunClean.IsEnabled = $false; $dism = $ChkDISM.IsChecked; $dir = $ScriptsDir
-    Invoke-StreamedJob -Label "limpiando sistema..." `
-        -Job {
-            param($d,$dism,$sf)
-            if ($dism) { & "$d\CleanPC.ps1" -Silent -IncludeDISM -StreamFile $sf }
-            else       { & "$d\CleanPC.ps1" -Silent -StreamFile $sf }
-        } `
-        -JobArgs @($dir,$dism) `
-        -OnDone {
-            param($result)
-            if ($result) { $StatusBar.Text = "limpieza completa: $($result.TotalGB) GB liberados." }
-            else         { $StatusBar.Text = "limpieza completada." }
-            $BtnRunClean.IsEnabled = $true
-        }
-})
-
-# ---- GAMING -------------------------------------------------------------
-function Run-GameScript { param([string]$Mode)
-    if ($Mode -in "Apply","Restore" -and -not $script:IsAdmin) {
-        Add-LogSection "GAMING BOOST - $Mode"
-        Add-LogLine "  [XX]  Requiere permisos de Administrador." "#cc3355" -Bold
-        Add-LogLine "  [i]   Usa el boton [^] REINICIAR COMO ADMIN en el panel izquierdo." "#9944cc"
-        Add-LogLine "  [i]   El modo [?] ESTADO ACTUAL funciona sin admin." "#9944cc"
-        $StatusBar.Text = "gaming boost requiere admin para Apply/Restore."
+        [System.Windows.MessageBox]::Show("Ya hay una tarea en ejecución.", "PC Toolkit") | Out-Null
         return
     }
 
-    Add-LogSection "GAMING BOOST - $Mode"
-    Add-LogLine ">> gameboost modo: $Mode" "#9922cc" -Bold
-    $BtnGameCheck.IsEnabled = $false; $BtnGameApply.IsEnabled = $false; $BtnGameRestore.IsEnabled = $false
-    $dir = $ScriptsDir
-    Invoke-StreamedJob -Label "ejecutando gameboost $Mode..." `
-        -Job { param($d,$m,$sf) & "$d\GameBoost.ps1" -Mode $m -Silent -StreamFile $sf } `
-        -JobArgs @($dir,$Mode) `
-        -OnDone {
-            param($result)
-            $StatusBar.Text = "gameboost $Mode completado."
-            $bk = "$ScriptsDir\GameBoost_Backup.json"
-            if (Test-Path $bk) {
-                $d2 = (Get-Content $bk -Raw | ConvertFrom-Json).Timestamp
-                $BackupStatus.Text = "backup: $($d2.Substring(0,10))"; $BackupStatus.Foreground = Get-Brush "#44bb66"
-            } else {
-                $BackupStatus.Text = "sin backup"; $BackupStatus.Foreground = Get-Brush "#440033"
+    Console-Clear
+    $StatusBar.Text = "Ejecutando: $label..."
+    $JobStatus.Text = "● RUNNING"
+
+    $streamFile = [System.IO.Path]::GetTempFileName()
+    $script:_JobStream = $streamFile
+    $ea2 = $extraArgs
+
+    $script:_Job = Start-Job -ScriptBlock {
+        param($sp, $sf, $ea)
+        $params = @{ StreamFile = $sf } + $ea
+        & $sp @params
+    } -ArgumentList $scriptPath, $streamFile, $ea2
+
+    $pos = 0
+    $sf2 = $streamFile
+    $lbl = $label
+    $od  = $onDone
+
+    $timer = New-Object Windows.Threading.DispatcherTimer
+    $timer.Interval = [TimeSpan]::FromMilliseconds(200)
+    $timer.Add_Tick({
+        try {
+            if (Test-Path $sf2) {
+                $lines = [System.IO.File]::ReadAllLines($sf2)
+                while ($pos -lt $lines.Count) {
+                    $ln = $lines[$pos]; $pos++
+                    if ($ln) { Print-Line $ln }
+                }
             }
-            $BtnGameCheck.IsEnabled = $true; $BtnGameApply.IsEnabled = $true; $BtnGameRestore.IsEnabled = $true
+        } catch {}
+
+        if ($script:_Job -and $script:_Job.State -ne "Running") {
+            $timer.Stop()
+            try {
+                $lines2 = [System.IO.File]::ReadAllLines($sf2)
+                while ($pos -lt $lines2.Count) {
+                    $ln = $lines2[$pos]; $pos++
+                    if ($ln) { Print-Line $ln }
+                }
+            } catch {}
+
+            $result = $null
+            try { $result = Receive-Job $script:_Job -ErrorAction SilentlyContinue } catch {}
+            Remove-Job $script:_Job -Force -ErrorAction SilentlyContinue
+            $script:_Job = $null
+            try { Remove-Item $sf2 -Force -ErrorAction SilentlyContinue } catch {}
+
+            $JobStatus.Text = ""
+            $StatusBar.Text = "Listo"
+
+            if ($od) { & $od $result }
+
+            $script:_HistoryLog.Add(@{
+                Time  = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                Label = $lbl
+            })
         }
+    })
+    $timer.Start()
 }
 
-$BtnGameCheck.Add_Click({ Run-GameScript "Check" })
+# ─── SECURITY ─────────────────────────────────────────────────────────────────
+$BtnSecScan.Add_Click({
+    Switch-Tab "Security"
+    $secPath = Join-Path $ScriptsDir "SecurityCheck.ps1"
+    Run-Script -scriptPath $secPath -label "Escaneo de Seguridad" -onDone {
+        param($result)
+        if ($result -and $result.PSObject.Properties["Alerts"]) {
+            $script:_HealthSecCrit = @($result.Alerts | Where-Object { $_.Level -eq "CRIT" }).Count
+            $script:_HealthSecWarn = @($result.Alerts | Where-Object { $_.Level -eq "WARN" }).Count
+        }
+    }
+})
+
+$BtnSecFix.Add_Click({
+    Switch-Tab "Security"
+    $secPath = Join-Path $ScriptsDir "SecurityCheck.ps1"
+    Run-Script -scriptPath $secPath -extraArgs @{ ApplyFixes = $true } -label "Aplicar todos los fixes"
+})
+
+$BtnSecExport.Add_Click({
+    $logDir = Join-Path $ScriptsDir "Logs"
+    if (-not (Test-Path $logDir)) { New-Item $logDir -ItemType Directory | Out-Null }
+    $htmlPath = Join-Path $logDir ("SecurityReport_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".html")
+
+    $lines = $ConsolePanel.Children | ForEach-Object {
+        if ($_ -is [Windows.Controls.StackPanel]) {
+            ($_.Children | ForEach-Object { $_.Text }) -join " "
+        } elseif ($_ -is [Windows.Controls.TextBlock]) {
+            $_.Text
+        }
+    }
+    $body = ($lines | ForEach-Object { "<p>$([System.Web.HttpUtility]::HtmlEncode($_))</p>" }) -join "`n"
+    @"
+<!DOCTYPE html><html><head><meta charset='utf-8'>
+<title>PC Toolkit Security Report</title>
+<style>body{background:#0a0015;color:#ddd0ff;font-family:Consolas,monospace;padding:24px;}
+h1{color:#cc88ff;}p{margin:2px 0;font-size:13px;}</style></head>
+<body><h1>PC Toolkit — Security Report</h1>
+<p style='color:#664488'>$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')</p><hr>
+$body</body></html>
+"@ | Out-File -FilePath $htmlPath -Encoding UTF8
+    Print-Line "  [OK]  Reporte exportado: $htmlPath"
+    try { Start-Process $htmlPath } catch {}
+})
+
+$BtnSecSchedule.Add_Click({
+    $res = [System.Windows.MessageBox]::Show(
+        "Crear tarea programada para escaneo diario a las 09:00?","Auto-escaneo","YesNo","Question")
+    if ($res -eq "Yes") {
+        $secPath = Join-Path $ScriptsDir "SecurityCheck.ps1"
+        $action  = New-ScheduledTaskAction -Execute "powershell.exe" `
+            -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$secPath`""
+        $trigger = New-ScheduledTaskTrigger -Daily -At "09:00"
+        try {
+            Register-ScheduledTask -TaskName "PCToolkit_SecurityScan" -Action $action `
+                -Trigger $trigger -RunLevel Highest -Force -ErrorAction Stop
+            Print-Line "  [OK]  Tarea programada creada: escaneo diario 09:00"
+        } catch {
+            Print-Line "  [!!]  Error creando tarea: $_"
+        }
+    }
+})
+
+# ─── CLEAN ────────────────────────────────────────────────────────────────────
+$BtnClean.Add_Click({
+    Switch-Tab "Clean"
+    $cleanPath = Join-Path $ScriptsDir "CleanPC.ps1"
+    Run-Script -scriptPath $cleanPath -label "Limpieza del sistema" -onDone {
+        param($result)
+        if ($result -and $result.PSObject.Properties["TotalGB"]) {
+            Print-Line "  [OK]  Total liberado: $($result.TotalGB) GB"
+        }
+    }
+})
+
+$BtnCleanDism.Add_Click({
+    Switch-Tab "Clean"
+    $cleanPath = Join-Path $ScriptsDir "CleanPC.ps1"
+    Run-Script -scriptPath $cleanPath -extraArgs @{ IncludeDISM = $true } -label "Limpieza + DISM"
+})
+
+$BtnRamClean.Add_Click({
+    Print-Line "=SECTION=LIMPIEZA DE RAM"
+    Print-Line "  [..]  Vaciando working sets de procesos..."
+    $j = Start-Job -ScriptBlock {
+        Add-Type -TypeDefinition @"
+using System;using System.Runtime.InteropServices;
+public class WS{[DllImport("psapi.dll")]public static extern bool EmptyWorkingSet(IntPtr h);}
+"@
+        Get-Process | ForEach-Object { try { [WS]::EmptyWorkingSet($_.Handle) | Out-Null } catch {} }
+    }
+    $t2 = New-Object Windows.Threading.DispatcherTimer
+    $t2.Interval = [TimeSpan]::FromMilliseconds(300)
+    $t2.Add_Tick({
+        if ($j.State -ne "Running") {
+            $t2.Stop()
+            Receive-Job $j | Out-Null
+            Remove-Job $j -Force
+            Print-Line "  [OK]  RAM working sets vaciados"
+        }
+    })
+    $t2.Start()
+})
+
+# ─── GAMING ───────────────────────────────────────────────────────────────────
 $BtnGameApply.Add_Click({
-    $r = [System.Windows.MessageBox]::Show(
-        "Aplicar optimizaciones de red, CPU, mouse e input lag?`nSe guardara un backup para restaurar.",
-        "GameBoost // IRREBOY","YesNo","Question")
-    if ($r -eq "Yes") { Run-GameScript "Apply" }
+    Switch-Tab "Gaming"
+    $gamePath = Join-Path $ScriptsDir "GameBoost.ps1"
+    Run-Script -scriptPath $gamePath -extraArgs @{ Action = "Apply" } -label "GameBoost Aplicar"
 })
 $BtnGameRestore.Add_Click({
-    if (-not (Test-Path "$ScriptsDir\GameBoost_Backup.json")) {
-        [System.Windows.MessageBox]::Show("No hay backup disponible.","GameBoost","OK","Warning") | Out-Null; return
-    }
-    Run-GameScript "Restore"
+    Switch-Tab "Gaming"
+    $gamePath = Join-Path $ScriptsDir "GameBoost.ps1"
+    Run-Script -scriptPath $gamePath -extraArgs @{ Action = "Restore" } -label "GameBoost Restaurar"
+})
+$BtnGameCheck.Add_Click({
+    Switch-Tab "Gaming"
+    $gamePath = Join-Path $ScriptsDir "GameBoost.ps1"
+    Run-Script -scriptPath $gamePath -extraArgs @{ Action = "Check" } -label "GameBoost Verificar"
 })
 
-# ---- KILL PROCESSES -----------------------------------------------------
 $BtnKillProcs.Add_Click({
-    Add-LogSection "KILL PROCESOS"
-    $targets = @(
-        @{N="discord";D="Discord"},@{N="chrome";D="Chrome"},@{N="msedge";D="Edge"},
-        @{N="OneDrive";D="OneDrive"},@{N="Teams";D="Teams"},@{N="slack";D="Slack"},
-        @{N="Spotify";D="Spotify"},@{N="EpicGamesLauncher";D="Epic Games"}
-    )
-    $killed = 0
-    foreach ($t in $targets) {
-        $procs = Get-Process -Name $t.N -ErrorAction SilentlyContinue
-        foreach ($p in $procs) {
-            try { $p.Kill(); Add-LogLine "  [OK]  cerrado: $($t.D)" "#44bb66"; $killed++ }
-            catch { Add-LogLine "  [!!]  no se pudo cerrar $($t.D)" "#ddaa22" }
-        }
-    }
-    if ($killed -eq 0) { Add-LogLine "  [--]  sin procesos pesados activos" "#445566" }
-    else {
-        try {
-            $freeRam = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory/1MB,1)
-            Add-LogLine "  [OK]  $killed cerrado(s) | RAM libre ahora: ${freeRam} GB" "#44bb66"
-        } catch { Add-LogLine "  [OK]  $killed proceso(s) cerrado(s)" "#44bb66" }
-    }
-    $StatusBar.Text = "kill: $killed proceso(s) cerrado(s)."
-})
-
-# ---- PING TEST ----------------------------------------------------------
-$BtnPingTest.Add_Click({
-    Add-LogSection "PING GAMING SERVERS"
-    Add-LogLine ">> probando latencia (ICMP + TCP fallback)..." "#9922cc" -Bold
-    $BtnPingTest.IsEnabled = $false; $BtnSpeedTest.IsEnabled = $false
-    $script:_StreamFile = [System.IO.Path]::GetTempFileName()
-    $script:_LastLineIdx = 0; $script:_OkCount = 0; $script:_WarnCount = 0; $script:_CritCount = 0
-    $script:_StartTime = Get-Date
-    $sf = $script:_StreamFile
-    $ScanProgress.Visibility = "Visible"; $StatusBar.Text = "probando latencia..."
-
-    $initSb = $script:_InitScript
-    $script:_Job = Start-Job -InitializationScript $initSb -ScriptBlock {
-        param($sf)
-        function W { param($l)
-            try {
-                $fs=New-Object System.IO.FileStream($sf,[System.IO.FileMode]::Append,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite)
-                $sw=New-Object System.IO.StreamWriter($fs,[System.Text.Encoding]::UTF8)
-                $sw.WriteLine($l);$sw.Flush();$sw.Close()
-            } catch {}
-        }
-
-        # Mide latencia: ICMP primero, si falla -> TCP en el puerto dado
-        function Measure-Latency {
-            param([string]$Host, [int]$TcpPort = 443)
-            # Intento ICMP (3 pings)
-            try {
-                $ping = New-Object System.Net.NetworkInformation.Ping
-                $opts = New-Object System.Net.NetworkInformation.PingOptions
-                $opts.Ttl = 64; $opts.DontFragment = $false
-                $times = @()
-                for ($i = 0; $i -lt 3; $i++) {
-                    $r = $ping.Send($Host, 1500, ([byte[]]::new(32)), $opts)
-                    if ($r.Status -eq 'Success') { $times += $r.RoundtripTime }
-                }
-                if ($times.Count -gt 0) {
-                    return @{ Ms=[math]::Round(($times | Measure-Object -Average).Average); Via="ICMP" }
-                }
-            } catch {}
-            # Fallback TCP
-            try {
-                $sw = [System.Diagnostics.Stopwatch]::StartNew()
-                $tc  = New-Object System.Net.Sockets.TcpClient
-                $ar  = $tc.BeginConnect($Host, $TcpPort, $null, $null)
-                $ok  = $ar.AsyncWaitHandle.WaitOne(2500, $false)
-                $sw.Stop()
-                if ($ok -and $tc.Connected) {
-                    $tc.Close()
-                    return @{ Ms=[math]::Round($sw.ElapsedMilliseconds); Via="TCP:$TcpPort" }
-                }
-                try { $tc.Close() } catch {}
-            } catch {}
-            return $null
-        }
-
-        function Latency-Bar {
-            param([int]$ms)
-            if ($ms -lt 50)  { return "EXCELENTE" }
-            if ($ms -lt 100) { return "bueno    " }
-            if ($ms -lt 150) { return "aceptable" }
-            if ($ms -lt 250) { return "alto     " }
-            return "muy alto "
-        }
-
-        $servers = @(
-            @{N="Riot LATAM SA ";H="la2.lol.riotgames.com";P=443},
-            @{N="Riot LATAM SA1";H="la1.lol.riotgames.com";P=443},
-            @{N="Steam CDN     ";H="cdn.cloudflare.steamstatic.com";P=443},
-            @{N="Steam Login   ";H="store.steampowered.com";P=443},
-            @{N="Blizzard      ";H="us.battle.net";P=1119},
-            @{N="Epic Games    ";H="www.epicgames.com";P=443},
-            @{N="Cloudflare DNS";H="1.1.1.1";P=53},
-            @{N="Google DNS    ";H="8.8.8.8";P=53}
-        )
-
-        foreach ($s in $servers) {
-            $res = Measure-Latency -Host $s.H -TcpPort $s.P
-            if ($res) {
-                $ms  = $res.Ms
-                $via = $res.Via
-                $bar = Latency-Bar $ms
-                $pad = "{0,4}" -f $ms
-                if ($ms -lt 50)       { W "  [OK]  $($s.N)  ${pad}ms  $bar  ($via)" }
-                elseif ($ms -lt 100)  { W "  [OK]  $($s.N)  ${pad}ms  $bar  ($via)" }
-                elseif ($ms -lt 150)  { W "  [!!]  $($s.N)  ${pad}ms  $bar  ($via)" }
-                else                  { W "  [XX]  $($s.N)  ${pad}ms  $bar  ($via)" }
-            } else {
-                W "  [XX]  $($s.N)  ----  sin respuesta  (ICMP+TCP bloqueado)"
-            }
-        }
-        [PSCustomObject]@{Done=$true}
-    } -ArgumentList $sf
-
-    if ($script:_Timer -and $script:_Timer.IsEnabled) { $script:_Timer.Stop() }
-    $script:_Timer = New-Object Windows.Threading.DispatcherTimer
-    $script:_Timer.Interval = [TimeSpan]::FromMilliseconds(180)
-    $script:_Timer.Add_Tick({
-        if ($script:_StreamFile) {
-            $lines = Read-StreamLines $script:_StreamFile
-            for ($i=$script:_LastLineIdx;$i-lt$lines.Count;$i++) {
-                $l=$lines[$i];if($l.Trim()){Q-Line $l (ColorOf-Line $l)}
-                $script:_LastLineIdx++
-            }
-        }
-        if ($script:_Job -and $script:_Job.State -in "Completed","Failed","Stopped") {
-            $script:_Timer.Stop()
-            if ($script:_StreamFile) {
-                $lines=Read-StreamLines $script:_StreamFile
-                for ($i=$script:_LastLineIdx;$i-lt$lines.Count;$i++){$l=$lines[$i];if($l.Trim()){Q-Line $l (ColorOf-Line $l)}}
-                Remove-Item $script:_StreamFile -ErrorAction SilentlyContinue; $script:_StreamFile=""
-            }
-            try { Receive-Job $script:_Job -ErrorAction Stop | Out-Null } catch { Q-Line "  [XX]  Error: $_" "#cc3355" }
-            Remove-Job  $script:_Job -ErrorAction SilentlyContinue; $script:_Job=$null
-            $elapsed=[math]::Round(((Get-Date)-$script:_StartTime).TotalSeconds,1)
-            $script:_PrintQueue.Enqueue(@{Type="Summary";Ok=$script:_OkCount;Warn=$script:_WarnCount;Crit=$script:_CritCount;Duration="${elapsed}s"})
-            $script:_PrintQueue.Enqueue(@{Type="Done";Result=$null;OnDone={
-                $StatusBar.Text="ping test completado.";$ScanProgress.Visibility="Collapsed"
-                $BtnPingTest.IsEnabled=$true; $BtnSpeedTest.IsEnabled=$true
-            }})
-        }
-    })
-    $script:_Timer.Start()
-})
-
-# ---- SPEED TEST ----------------------------------------------------------
-$BtnSpeedTest.Add_Click({
-    Add-LogSection "SPEED TEST  (Cloudflare)"
-    Add-LogLine ">> midiendo latencia, descarga y subida..." "#9922cc" -Bold
-    Add-LogLine "  [i]   servidor: speed.cloudflare.com" "#334466"
-    $BtnSpeedTest.IsEnabled = $false; $BtnPingTest.IsEnabled = $false
-    $script:_StreamFile = [System.IO.Path]::GetTempFileName()
-    $script:_LastLineIdx = 0
-    $script:_StartTime = Get-Date
-    $sf = $script:_StreamFile
-    $ScanProgress.Visibility = "Visible"; $StatusBar.Text = "midiendo velocidad..."
-
-    $initSb = $script:_InitScript
-    $script:_Job = Start-Job -InitializationScript $initSb -ScriptBlock {
-        param($sf)
-        function W { param($l)
-            try {
-                $fs=New-Object System.IO.FileStream($sf,[System.IO.FileMode]::Append,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite)
-                $sw=New-Object System.IO.StreamWriter($fs,[System.Text.Encoding]::UTF8)
-                $sw.WriteLine($l);$sw.Flush();$sw.Close()
-            } catch {}
-        }
-        function Fmt { param([double]$bps)
-            if ($bps -ge 1MB) { "{0:N1} MB/s  ({1:N1} Mbps)" -f ($bps/1MB),($bps*8/1MB) }
-            else               { "{0:N1} KB/s  ({1:N2} Mbps)" -f ($bps/1KB),($bps*8/1MB) }
-        }
-
-        $avgLat = 0; $avgJitter = 0; $mbpsDl = 0.0; $mbpsUl = 0.0
-
-        # --- LATENCIA (10 pings a 1.1.1.1) ---
-        W "=SECTION=LATENCIA"
-        try {
-            $ping = New-Object System.Net.NetworkInformation.Ping
-            $times = @()
-            for ($i=0;$i-lt10;$i++) {
-                $r = $ping.Send("1.1.1.1", 2000)
-                if ($r.Status -eq 'Success') { $times += $r.RoundtripTime }
-                Start-Sleep -Milliseconds 80
-            }
-            if ($times) {
-                $avgLat = [int][math]::Round(($times|Measure-Object -Average).Average)
-                $minLat = ($times|Measure-Object -Minimum).Minimum
-                $maxLat = ($times|Measure-Object -Maximum).Maximum
-                if ($times.Count -gt 1) {
-                    $diffs=@(); for($i=1;$i-lt$times.Count;$i++){$diffs+=([Math]::Abs($times[$i]-$times[$i-1]))}
-                    $avgJitter = [int][math]::Round(($diffs|Measure-Object -Average).Average)
-                }
-                W "  [OK]  latencia:  avg ${avgLat}ms  min ${minLat}ms  max ${maxLat}ms"
-                W "  [OK]  jitter:    ${avgJitter}ms  ($($times.Count) muestras)"
-            }
-        } catch { W "  [!!]  latencia: error - $_" }
-
-        # --- DESCARGA ---
-        W "=SECTION=DESCARGA"
-        $dlSizes = @(
-            @{Url="https://speed.cloudflare.com/__down?bytes=1000000";  B=1000000;  L="  1 MB"},
-            @{Url="https://speed.cloudflare.com/__down?bytes=10000000"; B=10000000; L=" 10 MB"},
-            @{Url="https://speed.cloudflare.com/__down?bytes=25000000"; B=25000000; L=" 25 MB"}
-        )
-        $dlBps = @()
-        foreach ($t in $dlSizes) {
-            try {
-                $wc = New-Object System.Net.WebClient
-                $wc.Headers.Add("User-Agent","PCToolkit/3.0")
-                $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-                $data = $wc.DownloadData($t.Url)
-                $sw2.Stop()
-                $bps = $data.Length / $sw2.Elapsed.TotalSeconds
-                $dlBps += $bps
-                W "  [OK]  $($t.L): $(Fmt $bps)"
-            } catch { W "  [!!]  $($t.L): error - $_" }
-        }
-        if ($dlBps) {
-            $avgBps = ($dlBps|Measure-Object -Average).Average
-            $mbpsDl = [math]::Round($avgBps*8/1MB, 1)
-        }
-
-        # --- SUBIDA ---
-        W "=SECTION=SUBIDA"
-        $ulSizes = @(
-            @{B=1000000;  L="  1 MB"},
-            @{B=5000000;  L="  5 MB"},
-            @{B=10000000; L=" 10 MB"}
-        )
-        $ulBps = @()
-        foreach ($t in $ulSizes) {
-            try {
-                $payload = New-Object byte[] $t.B
-                (New-Object System.Random).NextBytes($payload)
-                $wc = New-Object System.Net.WebClient
-                $wc.Headers.Add("User-Agent","PCToolkit/3.0")
-                $wc.Headers.Add("Content-Type","application/octet-stream")
-                $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-                $wc.UploadData("https://speed.cloudflare.com/__up","POST",$payload) | Out-Null
-                $sw2.Stop()
-                $bps = $t.B / $sw2.Elapsed.TotalSeconds
-                $ulBps += $bps
-                W "  [OK]  $($t.L): $(Fmt $bps)"
-            } catch { W "  [!!]  $($t.L): error - $_" }
-        }
-        if ($ulBps) {
-            $avgBps = ($ulBps|Measure-Object -Average).Average
-            $mbpsUl = [math]::Round($avgBps*8/1MB, 1)
-        }
-
-        [PSCustomObject]@{
-            Done=$true; DownMbps=$mbpsDl; UpMbps=$mbpsUl
-            LatMs=$avgLat; JitterMs=$avgJitter
-        }
-    } -ArgumentList $sf
-
-    if ($script:_Timer -and $script:_Timer.IsEnabled) { $script:_Timer.Stop() }
-    $script:_Timer = New-Object Windows.Threading.DispatcherTimer
-    $script:_Timer.Interval = [TimeSpan]::FromMilliseconds(200)
-    $script:_Timer.Add_Tick({
-        if ($script:_StreamFile) {
-            $lines = Read-StreamLines $script:_StreamFile
-            for ($i=$script:_LastLineIdx;$i-lt$lines.Count;$i++) {
-                $l=$lines[$i]; if($l.Trim()){ Q-Line $l (ColorOf-Line $l) }
-                $script:_LastLineIdx++
-            }
-        }
-        if ($script:_Job -and $script:_Job.State -in "Completed","Failed","Stopped") {
-            $script:_Timer.Stop()
-            if ($script:_StreamFile) {
-                $lines = Read-StreamLines $script:_StreamFile
-                for ($i=$script:_LastLineIdx;$i-lt$lines.Count;$i++){$l=$lines[$i];if($l.Trim()){Q-Line $l (ColorOf-Line $l)}}
-                Remove-Item $script:_StreamFile -ErrorAction SilentlyContinue; $script:_StreamFile=""
-            }
-            $sr = $null
-            try {
-                $raw = Receive-Job $script:_Job -ErrorAction Stop
-                $sr  = if ($raw -is [array]) { $raw | Where-Object { $_ -is [PSCustomObject] -and $_.PSObject.Properties['DownMbps'] } | Select-Object -Last 1 } else { $raw }
-            } catch { Q-Line "  [XX]  Error job: $_" "#cc3355" }
-            Remove-Job $script:_Job -ErrorAction SilentlyContinue; $script:_Job=$null
-            $elapsed = [math]::Round(((Get-Date)-$script:_StartTime).TotalSeconds,1)
-            $down    = if ($sr) { [double]$sr.DownMbps }   else { 0.0 }
-            $up      = if ($sr) { [double]$sr.UpMbps }     else { 0.0 }
-            $lat     = if ($sr) { [int]$sr.LatMs }         else { 0 }
-            $jitter  = if ($sr) { [int]$sr.JitterMs }      else { 0 }
-            $script:_PrintQueue.Enqueue(@{Type="SpeedCard";Down=$down;Up=$up;Lat=$lat;Jitter=$jitter;Duration="${elapsed}s"})
-            $script:_PrintQueue.Enqueue(@{Type="Done";Result=$null;OnDone={
-                $StatusBar.Text="speed test completado.";$ScanProgress.Visibility="Collapsed"
-                $BtnSpeedTest.IsEnabled=$true; $BtnPingTest.IsEnabled=$true
-            }})
-        }
-    })
-    $script:_Timer.Start()
-})
-
-# ---- TOOLTIPS Y HOVER HINTS PARA BOTONES VISUAL/RED --------------------
-$BtnVFX.ToolTip          = "Desactiva animaciones, transparencia y efectos de ventana de Windows para liberar CPU/GPU"
-$BtnFlushDNS.ToolTip     = "Limpia la cache DNS del sistema. Util si hay problemas de conexion o sitios no cargan"
-$BtnResetNet.ToolTip     = "Desactiva y reactiva el adaptador de red activo. Corta la conexion ~3 segundos"
-$BtnClearShaders.ToolTip = "Elimina caches de shaders de GPU (NVIDIA/AMD/Steam). Los juegos recompilan al iniciar, luego quedan mas rapidos"
-$BtnKillProcs.ToolTip    = "Cierra forcosamente Discord, Chrome, Edge, OneDrive, Teams, Slack, Spotify y Epic para liberar RAM"
-$BtnPingTest.ToolTip     = "Mide latencia a servidores de Riot, Steam, Blizzard, Epic y DNS (ICMP + TCP fallback)"
-$BtnSpeedTest.ToolTip    = "Mide velocidad de descarga y subida usando servidores de Cloudflare"
-
-$hoverMap = @{
-    $BtnVFX          = "[V] EFECTOS VISUALES - desactiva animaciones y transparencia de Windows (requiere reiniciar Explorer)"
-    $BtnFlushDNS     = "[N] FLUSH DNS - limpia cache DNS del sistema"
-    $BtnResetNet     = "[R] RESET ADAPTADOR - reconecta el adaptador de red activo (corta ~3s)"
-    $BtnClearShaders = "[S] LIMPIAR SHADERS - elimina caches de shaders de GPU (NVIDIA, AMD, Steam)"
-    $BtnKillProcs    = "[X] KILL PROCESOS - cierra apps pesadas en background para liberar RAM"
-    $BtnPingTest     = "[P] PING SERVERS - mide latencia a servidores de juegos (ICMP + TCP fallback automatico)"
-    $BtnSpeedTest    = "[W] SPEED TEST - mide descarga y subida via Cloudflare (puede tomar ~30s)"
-    $BtnGameCheck    = "[?] ESTADO ACTUAL - muestra el estado de cada optimizacion gaming (sin admin)"
-    $BtnGameApply    = "[+] OPTIMIZAR - aplica ajustes de red, CPU, mouse, DVR y energia (requiere admin)"
-    $BtnGameRestore  = "[-] RESTAURAR - deshace todas las optimizaciones aplicadas (requiere admin)"
-}
-foreach ($kv in $hoverMap.GetEnumerator()) {
-    $msg = $kv.Value
-    $kv.Key.Add_MouseEnter({ $StatusBar.Text = $msg }.GetNewClosure())
-    $kv.Key.Add_MouseLeave({ $StatusBar.Text = "listo.  $env:COMPUTERNAME  $(if($script:IsAdmin){'[ADMIN]'}else{'[USER]'})" }.GetNewClosure())
-}
-
-# ---- VISUAL FX ----------------------------------------------------------
-$BtnVFX.Add_Click({
-    $r = [System.Windows.MessageBox]::Show(
-        "Aplicar modo rendimiento?`n`n- Desactiva animaciones de ventana`n- Desactiva transparencia`n- Optimiza efectos visuales`n`nRequiere reiniciar Explorer para aplicar.",
-        "Efectos Visuales","YesNo","Question")
-    if ($r -ne "Yes") { return }
-    Add-LogSection "EFECTOS VISUALES"
-    try {
-        $vk="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
-        if(-not(Test-Path $vk)){New-Item $vk -Force|Out-Null}
-        Set-ItemProperty $vk -Name "VisualFXSetting" -Value 2 -Type DWord
-        Add-LogLine "  [OK]  Efectos visuales: modo rendimiento" "#44bb66"
-    } catch { Add-LogLine "  [!!]  VisualFX: $_" "#ddaa22" }
-    try {
-        Set-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize" `
-            -Name "EnableTransparency" -Value 0 -Type DWord -ErrorAction Stop
-        Add-LogLine "  [OK]  Transparencia desactivada" "#44bb66"
-    } catch { Add-LogLine "  [!!]  Transparencia: $_" "#ddaa22" }
-    try {
-        Set-ItemProperty "HKCU:\Control Panel\Desktop\WindowMetrics" -Name "MinAnimate" -Value "0" -ErrorAction Stop
-        Add-LogLine "  [OK]  Animaciones de ventana desactivadas" "#44bb66"
-    } catch { Add-LogLine "  [!!]  Animaciones: $_" "#ddaa22" }
-    Add-LogLine "  [i]   Para aplicar: clic derecho escritorio > Actualizar, o reinicia Explorer." "#9944cc"
-    $StatusBar.Text = "efectos visuales: modo rendimiento aplicado."
-})
-
-# ---- FLUSH DNS ----------------------------------------------------------
-$BtnFlushDNS.Add_Click({
-    $r = [System.Windows.MessageBox]::Show(
-        "Limpiar cache DNS del sistema?`n`nUtil si hay sitios que no cargan o conexiones lentas.",
-        "Flush DNS","YesNo","Question")
-    if ($r -ne "Yes") { return }
-    try {
-        Clear-DnsClientCache -ErrorAction Stop
-        Add-LogLine "  [OK]  Cache DNS limpiada correctamente" "#44bb66"
-        Add-LogLine "  [i]   Los sitios resolveran DNS de nuevo al conectarse" "#9944cc"
-        $StatusBar.Text = "DNS flush completado."
-    } catch { Add-LogLine "  [XX]  DNS flush fallido: $_" "#cc3355" }
-})
-
-# ---- RESET NET ----------------------------------------------------------
-$BtnResetNet.Add_Click({
-    $r=[System.Windows.MessageBox]::Show(
-        "Resetear adaptador de red activo?`n`nDesactiva y reactiva la conexion (~3 segundos de corte).`nUtil para resolver problemas de conexion sin reiniciar.",
-        "Reset Adaptador de Red","YesNo","Question")
-    if ($r -ne "Yes") { return }
-    Add-LogSection "RESET ADAPTADOR DE RED"
-    $dir = $ScriptsDir
-    Invoke-StreamedJob -Label "reseteando red..." `
-        -Job {
-            param($d,$sf)
-            function S { param($l)
-                try{$fs=New-Object System.IO.FileStream($sf,[System.IO.FileMode]::Append,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite)
-                $sw=New-Object System.IO.StreamWriter($fs,[System.Text.Encoding]::UTF8);$sw.WriteLine($l);$sw.Flush();$sw.Close()}catch{}
-            }
-            Get-NetAdapter|Where-Object{$_.Status-eq"Up"}|ForEach-Object{
-                S "  [i]   desactivando: $($_.Name)"
-                Disable-NetAdapter -Name $_.Name -Confirm:$false -ErrorAction SilentlyContinue
-                Start-Sleep -Milliseconds 1500
-                S "  [i]   reactivando: $($_.Name)"
-                Enable-NetAdapter -Name $_.Name -Confirm:$false -ErrorAction SilentlyContinue
-                Start-Sleep -Milliseconds 2000
-                S "  [OK]  $($_.Name): reset completado"
-            }
-            [PSCustomObject]@{Done=$true}
-        } `
-        -JobArgs @($dir) `
-        -OnDone { $StatusBar.Text = "reset de red completado." }
-})
-
-# ---- CLEAR SHADERS ------------------------------------------------------
-$BtnClearShaders.Add_Click({
-    $r = [System.Windows.MessageBox]::Show(
-        "Limpiar caches de shaders de GPU?`n`n- NVIDIA DX/GL Cache`n- AMD DX Cache`n- Steam Shaders`n- Epic Games y Riot Client`n`nLos juegos recompilaran shaders al primer inicio (puede tardar mas una vez).",
-        "Limpiar Shader Caches","YesNo","Question")
-    if ($r -ne "Yes") { return }
-    Add-LogSection "SHADER CACHES"
-    $paths = @(
-        @{P="$env:LOCALAPPDATA\Steam\htmlcache";N="Steam HTML"},
-        @{P="$env:LOCALAPPDATA\Steam\shaders";N="Steam Shaders"},
-        @{P="$env:LOCALAPPDATA\NVIDIA\DXCache";N="NVIDIA DX"},
-        @{P="$env:LOCALAPPDATA\NVIDIA\GLCache";N="NVIDIA GL"},
-        @{P="$env:LOCALAPPDATA\AMD\DxCache";N="AMD DX"},
-        @{P="$env:LOCALAPPDATA\EpicGamesLauncher\Saved\webcache";N="Epic Games"},
-        @{P="$env:APPDATA\Riot Games\Riot Client\Data\cache";N="Riot Client"}
-    )
-    $cleaned = 0
-    foreach ($item in $paths) {
-        if (Test-Path $item.P) {
-            try {
-                Get-ChildItem $item.P -Recurse -Force -ErrorAction SilentlyContinue |
-                    Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-                Add-LogLine "  [OK]  $($item.N): limpiado" "#44bb66"; $cleaned++
-            } catch { Add-LogLine "  [!!]  $($item.N): parcial" "#ddaa22" }
+    Switch-Tab "Gaming"
+    Print-Line "=SECTION=MATAR PROCESOS NO ESENCIALES"
+    @("Discord","chrome","msedge","OneDrive","Teams","slack","Spotify","EpicGamesLauncher","nvcontainer","Cortana") | ForEach-Object {
+        $found = Get-Process -Name $_ -ErrorAction SilentlyContinue
+        if ($found) {
+            $found | Stop-Process -Force -ErrorAction SilentlyContinue
+            Print-Line "  [OK]  Terminado: $_"
         } else {
-            Add-LogLine "  [--]  $($item.N): no instalado / no existe" "#445566"
+            Print-Line "  [--]  No corriendo: $_"
         }
     }
-    if ($cleaned -eq 0) { Add-LogLine "  [--]  nada que limpiar en shader caches" "#445566" }
-    else {
-        Add-LogLine "  [OK]  $cleaned carpeta(s) limpiadas" "#44bb66"
-        Add-LogLine "  [i]   Los juegos recompilaran shaders al primer inicio (normal)" "#9944cc"
-    }
-    $StatusBar.Text = "shaders: $cleaned carpeta(s) limpiadas."
 })
 
-# ---- RELOJ --------------------------------------------------------------
-$script:_ClockTimer = New-Object Windows.Threading.DispatcherTimer
-$script:_ClockTimer.Interval = [TimeSpan]::FromSeconds(1)
-$script:_ClockTimer.Add_Tick({ $ClockText.Text=Get-Date -Format "HH:mm:ss"; $DateText.Text=Get-Date -Format "ddd dd/MM/yyyy" })
-$script:_ClockTimer.Start()
+$BtnPingTest.Add_Click({
+    Switch-Tab "Gaming"
+    Print-Line "=SECTION=PING TEST"
+    @{
+        "Riot NA"    = "104.160.131.3"
+        "Steam"      = "208.64.200.50"
+        "Cloudflare" = "1.1.1.1"
+        "Google DNS" = "8.8.8.8"
+    }.GetEnumerator() | ForEach-Object {
+        $ping = New-Object System.Net.NetworkInformation.Ping
+        try {
+            $reply = $ping.Send($_.Value, 1000)
+            if ($reply.Status -eq "Success") {
+                $ms = $reply.RoundtripTime
+                $tag = if ($ms -lt 50) {"[OK]"} elseif ($ms -lt 100) {"[WARN]"} else {"[BAD]"}
+                Print-Line "  $tag  $($_.Key): ${ms}ms"
+            } else { Print-Line "  [BAD]  $($_.Key): timeout" }
+        } catch { Print-Line "  [!!]  $($_.Key): error" }
+    }
+})
 
-# ---- SYSTEM INFO (async) ------------------------------------------------
-$script:_SysJob = Start-Job -InitializationScript { Set-ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue } -ScriptBlock {
-    $cpu=(Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue|Select-Object -First 1).Name
-    $free=[math]::Round((Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).FreePhysicalMemory/1MB,1)
-    $tot=[math]::Round(((Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue)|Measure-Object Capacity -Sum).Sum/1GB)
-    $gpu=(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue|Select-Object -First 1).Name
-    "$cpu  //  RAM: ${free}GB libre / ${tot}GB  //  GPU: $gpu"
+$BtnFlushDns.Add_Click({
+    Print-Line "=SECTION=FLUSH DNS"
+    try {
+        & ipconfig /flushdns 2>&1 | Out-Null
+        Clear-DnsClientCache -ErrorAction SilentlyContinue
+        Print-Line "  [OK]  Cache DNS vaciada"
+    } catch { Print-Line "  [!!]  Error: $_" }
+})
+
+# ─── TWEAKS ───────────────────────────────────────────────────────────────────
+function Apply-Tweak { param($name, [scriptblock]$block)
+    try { & $block; Print-Line "  [OK]  $name aplicado" }
+    catch { Print-Line "  [!!]  Error en $name`: $_" }
 }
-$script:_SysTimer = New-Object Windows.Threading.DispatcherTimer
-$script:_SysTimer.Interval = [TimeSpan]::FromMilliseconds(500)
-$script:_SysTimer.Add_Tick({
-    if ($script:_SysJob -and $script:_SysJob.State -in "Completed","Failed","Stopped") {
-        $script:_SysTimer.Stop()
-        $info = Receive-Job $script:_SysJob -ErrorAction SilentlyContinue
-        Remove-Job $script:_SysJob -ErrorAction SilentlyContinue; $script:_SysJob = $null
-        if ($info) { $SysInfo.Text = $info }
+
+$BtnTelemetria.Add_Click({
+    Apply-Tweak "Telemetría" {
+        $k = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
+        if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
+        Set-ItemProperty $k -Name AllowTelemetry -Value 0 -Type DWord -Force
+        Stop-Service DiagTrack -Force -EA SilentlyContinue
+        Set-Service DiagTrack -StartupType Disabled -EA SilentlyContinue
     }
 })
-$script:_SysTimer.Start()
-
-# ---- INICIO -------------------------------------------------------------
-$Window.Add_Loaded({
-    Ensure-PrintTimer
-    Show-Splash
-    Start-MonitorJob
-    Setup-Tray
-    $adminLabel = if ($script:IsAdmin) { "[ADMIN]" } else { "[USER]" }
-    $StatusBar.Text = "listo.  $env:COMPUTERNAME  $adminLabel"
+$BtnCortana.Add_Click({
+    Apply-Tweak "Cortana" {
+        $k = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"
+        if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
+        Set-ItemProperty $k -Name AllowCortana -Value 0 -Type DWord -Force
+        Set-ItemProperty $k -Name DisableWebSearch -Value 1 -Type DWord -Force
+    }
+})
+$BtnOneDrive.Add_Click({
+    Apply-Tweak "OneDrive" {
+        $k = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive"
+        if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
+        Set-ItemProperty $k -Name DisableFileSyncNGSC -Value 1 -Type DWord -Force
+        Remove-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "OneDrive" -EA SilentlyContinue
+    }
+})
+$BtnNotif.Add_Click({
+    Apply-Tweak "Notificaciones" {
+        $k = "HKCU:\Software\Policies\Microsoft\Windows\Explorer"
+        if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
+        Set-ItemProperty $k -Name DisableNotificationCenter -Value 1 -Type DWord -Force
+    }
+})
+$BtnHibernate.Add_Click({
+    Apply-Tweak "Hibernación" { & powercfg /hibernate off }
+})
+$BtnPowerThrottling.Add_Click({
+    Apply-Tweak "Power Throttling" {
+        $k = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling"
+        if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
+        Set-ItemProperty $k -Name PowerThrottlingOff -Value 1 -Type DWord -Force
+    }
+})
+$BtnQoS.Add_Click({
+    Apply-Tweak "QoS Bandwidth" {
+        $k = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched"
+        if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
+        Set-ItemProperty $k -Name NonBestEffortLimit -Value 0 -Type DWord -Force
+    }
+})
+$BtnWin32Pri.Add_Click({
+    Apply-Tweak "Win32 Priority" {
+        Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" `
+            -Name Win32PrioritySeparation -Value 0x26 -Type DWord -Force
+    }
+})
+$BtnStartupMgr.Add_Click({
+    try { Start-Process "ms-settings:startupapps" } catch { Start-Process taskmgr.exe }
 })
 
-$Window.ShowDialog() | Out-Null
+# ─── HARDWARE ─────────────────────────────────────────────────────────────────
+function Load-HardwareInfo {
+    $StatusBar.Text = "Cargando hardware..."
+    $j = Start-Job -ScriptBlock {
+        $cpu  = Get-CimInstance Win32_Processor | Select-Object -First 1
+        $cs   = Get-CimInstance Win32_ComputerSystem
+        $os   = Get-CimInstance Win32_OperatingSystem
+        $gpu  = Get-CimInstance Win32_VideoController | Where-Object { $_.PNPDeviceID -like "PCI*" } | Select-Object -First 1
+        if (-not $gpu) { $gpu = Get-CimInstance Win32_VideoController | Select-Object -First 1 }
+        $mobo = Get-CimInstance Win32_BaseBoard
+        $bios = Get-CimInstance Win32_BIOS
+        $ram  = Get-CimInstance Win32_PhysicalMemory
+        $disks= Get-CimInstance Win32_DiskDrive
+        [PSCustomObject]@{
+            CpuName   = $cpu.Name
+            CpuCores  = "$($cpu.NumberOfCores) cores / $($cpu.NumberOfLogicalProcessors) threads"
+            CpuSpeed  = "$([math]::Round($cpu.MaxClockSpeed/1000,1)) GHz"
+            CpuSocket = $cpu.SocketDesignation
+            RamTotal  = "$([math]::Round($cs.TotalPhysicalMemory/1GB,0)) GB"
+            RamUsed   = "$([math]::Round(($cs.TotalPhysicalMemory - $os.FreePhysicalMemory*1KB)/1GB,1)) GB usados"
+            RamSlots  = "$($ram.Count) módulo(s)"
+            RamSpeed  = "$($ram[0].Speed) MHz"
+            GpuName   = $gpu.Name
+            GpuVram   = "$([math]::Round($gpu.AdapterRAM/1GB,1)) GB VRAM"
+            GpuDriver = $gpu.DriverVersion
+            MoboName  = $mobo.Product
+            MoboMfg   = $mobo.Manufacturer
+            BiosVer   = $bios.SMBIOSBIOSVersion
+            BiosDate  = "$($bios.ReleaseDate)"
+            DiskInfo  = ($disks | ForEach-Object { "$($_.Model) — $([math]::Round($_.Size/1GB,0)) GB ($($_.MediaType))" }) -join "`n"
+        }
+    }
+    $t2 = New-Object Windows.Threading.DispatcherTimer
+    $t2.Interval = [TimeSpan]::FromMilliseconds(300)
+    $t2.Add_Tick({
+        if ($j.State -ne "Running") {
+            $t2.Stop()
+            $r = Receive-Job $j -EA SilentlyContinue
+            Remove-Job $j -Force
+            if ($r) {
+                $HwCpuName.Text   = $r.CpuName
+                $HwCpuCores.Text  = $r.CpuCores
+                $HwCpuSpeed.Text  = $r.CpuSpeed
+                $HwCpuSocket.Text = "Socket: $($r.CpuSocket)"
+                $HwRamTotal.Text  = $r.RamTotal
+                $HwRamUsed.Text   = $r.RamUsed
+                $HwRamSlots.Text  = $r.RamSlots
+                $HwRamSpeed.Text  = $r.RamSpeed
+                $HwGpuName.Text   = $r.GpuName
+                $HwGpuVram.Text   = $r.GpuVram
+                $HwGpuDriver.Text = "Driver: $($r.GpuDriver)"
+                $HwMoboName.Text  = $r.MoboName
+                $HwMoboMfg.Text   = $r.MoboMfg
+                $HwBiosVer.Text   = "BIOS: $($r.BiosVer)"
+                $HwBiosDate.Text  = "Fecha: $($r.BiosDate)"
+                $HwDiskInfo.Text  = $r.DiskInfo
+            }
+            $StatusBar.Text = "Listo"
+        }
+    })
+    $t2.Start()
+}
+$BtnHwRefresh.Add_Click({ Load-HardwareInfo })
+
+# ─── PROCESSES ────────────────────────────────────────────────────────────────
+function Refresh-Processes {
+    $StatusBar.Text = "Cargando procesos..."
+    $f = $ProcSearch.Text.Trim()
+    $j = Start-Job -ScriptBlock {
+        param($filter)
+        Get-Process | Sort-Object CPU -Descending | ForEach-Object {
+            if ($filter -and $_.Name -notlike "*$filter*") { return }
+            [PSCustomObject]@{
+                PID     = $_.Id
+                Name    = $_.Name
+                CPU     = [math]::Round($_.CPU, 1)
+                RAM     = [math]::Round($_.WorkingSet64/1MB, 1)
+                Handles = $_.HandleCount
+                User    = ""
+            }
+        }
+    } -ArgumentList $f
+
+    $t2 = New-Object Windows.Threading.DispatcherTimer
+    $t2.Interval = [TimeSpan]::FromMilliseconds(300)
+    $t2.Add_Tick({
+        if ($j.State -ne "Running") {
+            $t2.Stop()
+            $items = @(Receive-Job $j -EA SilentlyContinue)
+            Remove-Job $j -Force
+            $ProcList.ItemsSource = $items
+            $ProcCount.Text = "Total: $($items.Count) procesos"
+            $StatusBar.Text = "Listo"
+        }
+    })
+    $t2.Start()
+}
+
+$BtnProcRefresh.Add_Click({ Refresh-Processes })
+$ProcSearch.Add_KeyDown({ param($s,$e); if ($e.Key -eq "Return") { Refresh-Processes } })
+
+$BtnProcKill.Add_Click({
+    $sel = $ProcList.SelectedItem
+    if (-not $sel) { [System.Windows.MessageBox]::Show("Selecciona un proceso primero.","PC Toolkit") | Out-Null; return }
+    $res = [System.Windows.MessageBox]::Show(
+        "¿Matar proceso $($sel.Name) (PID $($sel.PID))?","Confirmar","YesNo","Warning")
+    if ($res -eq "Yes") {
+        try {
+            Stop-Process -Id $sel.PID -Force -EA Stop
+            Refresh-Processes
+        } catch {
+            [System.Windows.MessageBox]::Show("Error: $_","PC Toolkit") | Out-Null
+        }
+    }
+})
+$BtnProcSuspend.Add_Click({
+    $sel = $ProcList.SelectedItem
+    if (-not $sel) { [System.Windows.MessageBox]::Show("Selecciona un proceso primero.","PC Toolkit") | Out-Null; return }
+    Print-Line "  [INFO]  Suspend requiere NtSuspendProcess (no incluido por seguridad)"
+})
+
+# ─── NETWORK ─────────────────────────────────────────────────────────────────
+function Add-NetLine { param($text, $color = "#ddd0ff", $size = 12, $family = "Segoe UI")
+    $tb = New-Object Windows.Controls.TextBlock
+    $tb.Text = $text
+    $tb.Foreground = New-Brush $color
+    $tb.FontSize = $size
+    $tb.Margin = [Windows.Thickness]::new(0,2,0,0)
+    if ($family -ne "Segoe UI") { $tb.FontFamily = [Windows.Media.FontFamily]::new($family) }
+    $null = $NetContent.Children.Add($tb)
+}
+
+function Load-NetworkInfo {
+    $NetContent.Children.Clear()
+    $StatusBar.Text = "Cargando red..."
+    $j = Start-Job -ScriptBlock {
+        $adapters = (Get-NetAdapter | Where-Object { $_.Status -eq "Up" } |
+            ForEach-Object { "$($_.Name) — $($_.InterfaceDescription) — $($_.LinkSpeed)" })
+        $ips = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } |
+            ForEach-Object { "$($_.InterfaceAlias): $($_.IPv4Address.IPAddress) / GW: $($_.IPv4DefaultGateway.NextHop)" })
+        $dns = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses } |
+            ForEach-Object { "$($_.InterfaceAlias): $($_.ServerAddresses -join ', ')" })
+        $ext = try { (Invoke-WebRequest "https://api.ipify.org" -UseBasicParsing -TimeoutSec 4).Content } catch { "N/A" }
+        [PSCustomObject]@{ Adapters=$adapters; IPs=$ips; DNS=$dns; ExtIP=$ext }
+    }
+    $t2 = New-Object Windows.Threading.DispatcherTimer
+    $t2.Interval = [TimeSpan]::FromMilliseconds(400)
+    $t2.Add_Tick({
+        if ($j.State -ne "Running") {
+            $t2.Stop()
+            $r = Receive-Job $j -EA SilentlyContinue
+            Remove-Job $j -Force
+            if ($r) {
+                @{
+                    "ADAPTADORES ACTIVOS" = $r.Adapters
+                    "DIRECCIONES IP"      = $r.IPs
+                    "SERVIDORES DNS"      = $r.DNS
+                    "IP EXTERNA"          = @("IP: $($r.ExtIP)")
+                }.GetEnumerator() | ForEach-Object {
+                    Add-NetLine $_.Key "#bb88ff" 10
+                    foreach ($line in $_.Value) { Add-NetLine $line }
+                }
+            }
+            $StatusBar.Text = "Listo"
+        }
+    })
+    $t2.Start()
+}
+
+$BtnNetRefresh.Add_Click({ Load-NetworkInfo })
+
+$BtnNetConnTest.Add_Click({
+    $NetContent.Children.Clear()
+    Add-NetLine "TEST DE CONEXIÓN" "#bb88ff" 10
+    @("8.8.8.8","1.1.1.1","google.com","cloudflare.com") | ForEach-Object {
+        $t_ = $_
+        $ping = New-Object System.Net.NetworkInformation.Ping
+        try {
+            $reply = $ping.Send($t_, 2000)
+            if ($reply.Status -eq "Success") {
+                Add-NetLine "$t_ → OK  $($reply.RoundtripTime)ms" "#44cc88" 12 "Consolas"
+            } else { Add-NetLine "$t_ → TIMEOUT" "#ff4455" 12 "Consolas" }
+        } catch { Add-NetLine "$t_ → ERROR" "#ff4455" 12 "Consolas" }
+    }
+})
+
+$BtnNetTrace.Add_Click({
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $host_ = [Microsoft.VisualBasic.Interaction]::InputBox("Host destino:","Traceroute","8.8.8.8")
+    if (-not $host_) { return }
+    $NetContent.Children.Clear()
+    Add-NetLine "TRACEROUTE → $host_" "#bb88ff" 10
+
+    $j = Start-Job -ScriptBlock { param($h); & tracert -d -h 15 $h 2>&1 } -ArgumentList $host_
+    $t2 = New-Object Windows.Threading.DispatcherTimer
+    $t2.Interval = [TimeSpan]::FromMilliseconds(500)
+    $t2.Add_Tick({
+        if ($j.State -ne "Running") {
+            $t2.Stop()
+            $lines = Receive-Job $j -EA SilentlyContinue
+            Remove-Job $j -Force
+            foreach ($l in $lines) { Add-NetLine "$l" "#ddd0ff" 11 "Consolas" }
+        }
+    })
+    $t2.Start()
+})
+
+$BtnNetFlushDns.Add_Click({
+    try {
+        & ipconfig /flushdns 2>&1 | Out-Null
+        Clear-DnsClientCache -EA SilentlyContinue
+        Add-NetLine "[OK] Cache DNS vaciada" "#44cc88"
+    } catch { Add-NetLine "[!!] Error" "#ff4455" }
+})
+
+$BtnNetReset.Add_Click({
+    $res = [System.Windows.MessageBox]::Show("Reiniciar adaptador activo?","Confirmar","YesNo","Warning")
+    if ($res -eq "Yes") {
+        $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+        if ($adapter) {
+            Disable-NetAdapter -Name $adapter.Name -Confirm:$false -EA SilentlyContinue
+            Start-Sleep -Milliseconds 1500
+            Enable-NetAdapter -Name $adapter.Name -Confirm:$false -EA SilentlyContinue
+            Add-NetLine "[OK] Adaptador $($adapter.Name) reiniciado" "#44cc88"
+        }
+    }
+})
+
+# ─── HISTORY ─────────────────────────────────────────────────────────────────
+function Render-History {
+    $HistContent.Children.Clear()
+    if ($script:_HistoryLog.Count -eq 0) {
+        $tb = New-Object Windows.Controls.TextBlock
+        $tb.Text = "Sin historial en esta sesión."
+        $tb.Foreground = New-Brush "#664488"
+        $tb.FontSize = 12
+        $tb.Margin = [Windows.Thickness]::new(0,8,0,0)
+        $null = $HistContent.Children.Add($tb)
+        return
+    }
+    foreach ($entry in ($script:_HistoryLog | Sort-Object { $_["Time"] } -Descending)) {
+        $border = New-Object Windows.Controls.Border
+        $border.Background = New-Brush "#0d0020"
+        $border.CornerRadius = [Windows.CornerRadius]::new(8)
+        $border.Padding = [Windows.Thickness]::new(14,10,14,10)
+        $border.Margin  = [Windows.Thickness]::new(0,0,0,8)
+        $sp = New-Object Windows.Controls.StackPanel
+        $t1 = New-Object Windows.Controls.TextBlock
+        $t1.Text = $entry["Time"]
+        $t1.Foreground = New-Brush "#664488"
+        $t1.FontSize = 10
+        $t2_ = New-Object Windows.Controls.TextBlock
+        $t2_.Text = $entry["Label"]
+        $t2_.Foreground = New-Brush "#ddd0ff"
+        $t2_.FontSize = 13
+        $t2_.FontWeight = "SemiBold"
+        $t2_.Margin = [Windows.Thickness]::new(0,2,0,0)
+        $null = $sp.Children.Add($t1)
+        $null = $sp.Children.Add($t2_)
+        $border.Child = $sp
+        $null = $HistContent.Children.Add($border)
+    }
+}
+
+$BtnHistRefresh.Add_Click({ Render-History })
+$BtnHistClear.Add_Click({
+    $res = [System.Windows.MessageBox]::Show("¿Limpiar historial?","Confirmar","YesNo","Question")
+    if ($res -eq "Yes") { $script:_HistoryLog.Clear(); Render-History }
+})
+
+# ─── MONITOR LIVE ─────────────────────────────────────────────────────────────
+try { $script:_DiskReadCtr  = New-Object System.Diagnostics.PerformanceCounter("PhysicalDisk","Disk Read Bytes/sec","_Total") } catch {}
+try { $script:_DiskWriteCtr = New-Object System.Diagnostics.PerformanceCounter("PhysicalDisk","Disk Write Bytes/sec","_Total") } catch {}
+try {
+    $netInst = (New-Object System.Diagnostics.PerformanceCounterCategory("Network Interface")).GetInstanceNames() | Select-Object -First 1
+    $script:_NetDlCtr = New-Object System.Diagnostics.PerformanceCounter("Network Interface","Bytes Received/sec",$netInst)
+    $script:_NetUlCtr = New-Object System.Diagnostics.PerformanceCounter("Network Interface","Bytes Sent/sec",$netInst)
+} catch {}
+
+$sparkChars = [char[]]@(0x20,0x2581,0x2582,0x2583,0x2584,0x2585,0x2586,0x2587,0x2588)
+
+function Get-Spark { param([System.Collections.Generic.List[double]]$hist)
+    if ($hist.Count -eq 0) { return "" }
+    $max = ($hist | Measure-Object -Maximum).Maximum
+    if ($max -lt 1) { $max = 1 }
+    -join ($hist | ForEach-Object {
+        $idx = [int][math]::Round($_ / $max * 8)
+        if ($idx -gt 8) { $idx = 8 }
+        $sparkChars[$idx]
+    })
+}
+
+$lastTempC = 0
+
+function Update-MonitorDisplay {
+    try {
+        # CPU
+        $samples = (Get-Counter '\Processor(_Total)\% Processor Time' -EA SilentlyContinue).CounterSamples
+        $cpuPct = if ($samples) { [math]::Round($samples[0].CookedValue, 1) } else { 0 }
+        $script:_CpuHistory.Add($cpuPct)
+        if ($script:_CpuHistory.Count -gt 20) { $script:_CpuHistory.RemoveAt(0) }
+        $MonCpuBar.Value = $cpuPct
+        $MonCpuPct.Text  = "$cpuPct%"
+        $MonCpuSpark.Text = Get-Spark $script:_CpuHistory
+
+        # CPU Temp (WMI thermal)
+        try {
+            $tempObj = Get-CimInstance -Namespace "root/WMI" -ClassName MSAcpi_ThermalZoneTemperature -EA SilentlyContinue | Select-Object -First 1
+            if ($tempObj) {
+                $lastTempC = [math]::Round(($tempObj.CurrentTemperature - 2732) / 10, 1)
+                $MonCpuTemp.Text = "Temp: ${lastTempC}°C"
+                $MonCpuTemp.Foreground = New-Brush (if ($lastTempC -gt 85) {"#ff4455"} elseif ($lastTempC -gt 70) {"#ffaa00"} else {"#44cc88"})
+            }
+        } catch {}
+
+        # RAM
+        $os2 = Get-CimInstance Win32_OperatingSystem -EA SilentlyContinue
+        if ($os2) {
+            $totalRam = [math]::Round($os2.TotalVisibleMemorySize / 1MB, 1)
+            $freeRam  = [math]::Round($os2.FreePhysicalMemory / 1MB, 1)
+            $usedRam  = [math]::Round($totalRam - $freeRam, 1)
+            $ramPct   = if ($totalRam -gt 0) { [math]::Round($usedRam / $totalRam * 100, 0) } else { 0 }
+            $MonRamBar.Value = $ramPct
+            $MonRamPct.Text  = "$ramPct%"
+            $MonRamUsed.Text = "$usedRam / $totalRam GB"
+        } else { $ramPct = 0 }
+
+        # GPU (counter or CIM)
+        $gpuPct = 0
+        try {
+            if (-not $script:_GpuCounter) {
+                $script:_GpuCounter = New-Object System.Diagnostics.PerformanceCounter("GPU Engine","Utilization Percentage","*","True")
+            }
+            $gpuPct = [math]::Min(100, [math]::Round($script:_GpuCounter.NextValue(), 1))
+        } catch {}
+        $script:_GpuHistory.Add($gpuPct)
+        if ($script:_GpuHistory.Count -gt 20) { $script:_GpuHistory.RemoveAt(0) }
+        $MonGpuBar.Value = $gpuPct
+        $MonGpuPct.Text  = "$gpuPct%"
+        $MonGpuSpark.Text = Get-Spark $script:_GpuHistory
+
+        # Disk space
+        $disk = Get-PSDrive C -EA SilentlyContinue
+        if ($disk) {
+            $dFree  = [math]::Round($disk.Free/1GB, 1)
+            $dUsed  = [math]::Round($disk.Used/1GB, 1)
+            $dTotal = $dFree + $dUsed
+            $dPct   = if ($dTotal -gt 0) { [math]::Round($dUsed/$dTotal*100, 0) } else { 0 }
+            $MonDiskBar.Value = $dPct
+            $MonDiskPct.Text  = "$dPct%"
+            $MonDiskFree.Text = "Libre: $dFree GB"
+        }
+        try {
+            $dr = if ($script:_DiskReadCtr)  { [math]::Round($script:_DiskReadCtr.NextValue()/1KB,0) } else { 0 }
+            $dw = if ($script:_DiskWriteCtr) { [math]::Round($script:_DiskWriteCtr.NextValue()/1KB,0) } else { 0 }
+            $MonDiskIO.Text = "↓${dr}KB/s ↑${dw}KB/s"
+        } catch {}
+
+        # Network
+        try {
+            $dl = if ($script:_NetDlCtr) { [math]::Round($script:_NetDlCtr.NextValue()/1KB,1) } else { 0 }
+            $ul = if ($script:_NetUlCtr) { [math]::Round($script:_NetUlCtr.NextValue()/1KB,1) } else { 0 }
+            $MonNetDl.Text = "↓ ${dl} KB/s"
+            $MonNetUl.Text = "↑ ${ul} KB/s"
+        } catch {}
+
+        # Top procs
+        $topP = Get-Process | Sort-Object CPU -Descending | Select-Object -First 3
+        $pL = @($MonProc1,$MonProc2,$MonProc3)
+        for ($i = 0; $i -lt 3; $i++) {
+            if ($topP[$i]) {
+                $p = $topP[$i]
+                $rmb = [math]::Round($p.WorkingSet64/1MB,0)
+                $cv  = [math]::Round($p.CPU,0)
+                $nm  = $p.Name
+                if ($nm.Length -gt 16) { $nm = $nm.Substring(0,16) }
+                $pL[$i].Text = $nm.PadRight(16) + " C:${cv}s R:${rmb}MB"
+            } else { $pL[$i].Text = "—" }
+        }
+
+        # Uptime
+        try {
+            $boot = (Get-CimInstance Win32_OperatingSystem -EA SilentlyContinue).LastBootUpTime
+            if ($boot) {
+                $up = [datetime]::Now - $boot
+                $MonUptime.Text = "Up: $($up.Days)d $($up.Hours)h $($up.Minutes)m"
+            }
+        } catch {}
+        $MonOS.Text   = "OS: Windows $([System.Environment]::OSVersion.Version.Major)"
+        $MonHost.Text = "Host: $([System.Environment]::MachineName)"
+
+        # Health score
+        $rp = if ($ramPct -gt 90) {20} elseif ($ramPct -gt 75) {10} else {0}
+        $tp = if ($lastTempC -gt 85) {20} elseif ($lastTempC -gt 70) {10} else {0}
+        $health = [math]::Max(0, 100 - $rp - $tp - ($script:_HealthSecCrit*15) - ($script:_HealthSecWarn*3))
+        $HealthScore.Text = "$health"
+        if ($health -ge 80) {
+            $HealthScore.Foreground = New-Brush "#44cc88"
+            $HealthDot.Fill = New-Brush "#44cc88"
+            $HealthStatus.Text = "Sistema saludable"
+        } elseif ($health -ge 50) {
+            $HealthScore.Foreground = New-Brush "#ffaa00"
+            $HealthDot.Fill = New-Brush "#ffaa00"
+            $HealthStatus.Text = "Revisar alertas"
+        } else {
+            $HealthScore.Foreground = New-Brush "#ff4455"
+            $HealthDot.Fill = New-Brush "#ff4455"
+            $HealthStatus.Text = "Acción requerida"
+        }
+    } catch {}
+}
+
+$monTimer = New-Object Windows.Threading.DispatcherTimer
+$monTimer.Interval = [TimeSpan]::FromSeconds(2)
+$monTimer.Add_Tick({ Update-MonitorDisplay })
+$monTimer.Start()
+
+# ─── System tray ──────────────────────────────────────────────────────────────
+function Setup-Tray {
+    $tray = New-Object System.Windows.Forms.NotifyIcon
+    $tray.Text = "PC Toolkit"
+    $tray.Icon = [System.Drawing.SystemIcons]::Application
+    $tray.Visible = $true
+
+    $menu = New-Object System.Windows.Forms.ContextMenuStrip
+
+    $openItem = New-Object System.Windows.Forms.ToolStripMenuItem "Abrir PC Toolkit"
+    $openItem.Add_Click({
+        $window.Dispatcher.Invoke([action]{
+            $window.Show()
+            $window.WindowState = "Normal"
+            $window.Activate()
+        })
+    })
+
+    $gamItem = New-Object System.Windows.Forms.ToolStripMenuItem "Gaming Mode ON/OFF"
+    $gamItem.Add_Click({
+        $backupFile = Join-Path $ScriptsDir "GameBoost_Backup.json"
+        $gp = Join-Path $ScriptsDir "GameBoost.ps1"
+        $action = if (Test-Path $backupFile) { "Restore" } else { "Apply" }
+        Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$gp`" -Action $action" -Verb RunAs
+    })
+
+    $exitItem = New-Object System.Windows.Forms.ToolStripMenuItem "Salir"
+    $exitItem.Add_Click({
+        $tray.Visible = $false
+        $tray.Dispose()
+        $window.Dispatcher.Invoke([action]{ $window.Close() })
+    })
+
+    $null = $menu.Items.Add($openItem)
+    $null = $menu.Items.Add($gamItem)
+    $null = $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    $null = $menu.Items.Add($exitItem)
+    $tray.ContextMenuStrip = $menu
+    $tray.Add_DoubleClick({
+        $window.Dispatcher.Invoke([action]{
+            $window.Show()
+            $window.WindowState = "Normal"
+            $window.Activate()
+        })
+    })
+
+    $window.Add_StateChanged({
+        if ($window.WindowState -eq "Minimized") { $window.Hide() }
+    })
+
+    $window.Add_Closing({
+        param($s,$e)
+        $e.Cancel = $true
+        $window.Hide()
+        $tray.ShowBalloonTip(2000,"PC Toolkit","Minimizado al área de sistema",[System.Windows.Forms.ToolTipIcon]::Info)
+    })
+}
+
+# ─── Init ─────────────────────────────────────────────────────────────────────
+$window.Add_Loaded({
+    Console-Clear
+    Print-Line "=SECTION=PC TOOLKIT v3.0 — BY IRREBOY"
+    Print-Line "  [OK]  Interfaz cargada correctamente"
+    Print-Line "  [INFO]  Selecciona un módulo del panel izquierdo"
+
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin) {
+        Print-Line "  [OK]  Corriendo como Administrador"
+    } else {
+        Print-Line "  [WARN]  Sin privilegios de Administrador — algunas funciones fallarán"
+    }
+
+    Update-MonitorDisplay
+    try { Setup-Tray } catch {}
+    $StatusBar.Text = "Listo — PC Toolkit v3.0"
+})
+
+$window.ShowDialog() | Out-Null
