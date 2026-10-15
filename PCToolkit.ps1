@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # PCToolkit.ps1  — BY IRREBOY
 # Full rewrite: 8 tabs, mode profiles, hardware panel, process manager, network panel, history log
 
