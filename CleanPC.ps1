@@ -1,8 +1,8 @@
-﻿# CleanPC.ps1
+# CleanPC.ps1
 param([switch]$Silent, [switch]$IncludeDISM, [string]$StreamFile = "")
 
-$script:StreamFile  = $StreamFile
-$script:BytesFreed  = 0
+$script:StreamFile = $StreamFile
+$script:BytesFreed = 0
 
 function Stream { param($line)
     if ($script:StreamFile) {
@@ -16,19 +16,15 @@ function Stream { param($line)
     }
 }
 function Log-Step { param($msg, $tag = "[OK]", $color = "Green")
-    $line = "  $tag  $msg"
-    Stream $line
+    $line = "  $tag  $msg"; Stream $line
     if (-not $Silent) { Write-Host $line -ForegroundColor $color }
 }
-function Log-Section { param($title)
-    Stream "=SECTION=$title"
-}
+function Log-Section { param($title) Stream "=SECTION=$title" }
 
 function Get-FolderSize { param($Path)
     if (-not (Test-Path $Path)) { return 0 }
     try { (Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum } catch { 0 }
 }
-
 function Remove-Folder { param($Path, $Label)
     if (-not (Test-Path $Path)) { Log-Step "$Label : no existe, omitido" "[--]" "DarkGray"; return 0 }
     $before = Get-FolderSize $Path
@@ -40,26 +36,45 @@ function Remove-Folder { param($Path, $Label)
     } catch { Log-Step "$Label : error parcial" "[!!]" "Yellow"; return 0 }
 }
 
-Log-Section "LIMPIEZA DE ARCHIVOS TEMPORALES"
-$script:BytesFreed += Remove-Folder $env:TEMP              "Temp usuario (%TEMP%)"
-$script:BytesFreed += Remove-Folder "C:\Windows\Temp"      "Temp sistema"
-$script:BytesFreed += Remove-Folder "C:\Windows\Prefetch"  "Prefetch"
-$script:BytesFreed += Remove-Folder "C:\Windows\Minidump"  "Minidumps"
+Log-Section "ARCHIVOS TEMPORALES"
+$script:BytesFreed += Remove-Folder $env:TEMP                   "Temp usuario (%TEMP%)"
+$script:BytesFreed += Remove-Folder "C:\Windows\Temp"           "Temp sistema"
+$script:BytesFreed += Remove-Folder "C:\Windows\Prefetch"       "Prefetch"
+$script:BytesFreed += Remove-Folder "C:\Windows\Minidump"       "Minidumps"
 $script:BytesFreed += Remove-Folder "$env:LOCALAPPDATA\CrashDumps" "CrashDumps"
 
-Log-Section "CACHÉS DEL SISTEMA"
+Log-Section "CACHES DEL SISTEMA"
 $thumbPath = "$env:LOCALAPPDATA\Microsoft\Windows\Explorer"
-$before = Get-FolderSize $thumbPath
+$beforeThumb = Get-FolderSize $thumbPath
 Get-ChildItem $thumbPath -Filter "thumbcache_*.db" -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-$script:BytesFreed += $before - (Get-FolderSize $thumbPath)
-Log-Step "Thumbnails cache: $([math]::Round(($before - (Get-FolderSize $thumbPath))/1MB,1)) MB" "[OK]"
+$freedThumb = $beforeThumb - (Get-FolderSize $thumbPath)
+$script:BytesFreed += $freedThumb
+Log-Step "Thumbnails cache: $([math]::Round($freedThumb/1MB,1)) MB" "[OK]"
 
 try { Clear-DnsClientCache -ErrorAction Stop; Log-Step "Cache DNS limpiada" "[OK]" }
 catch { Log-Step "Cache DNS: error" "[!!]" "Yellow" }
 
 $script:BytesFreed += Remove-Folder "C:\Windows\SoftwareDistribution\Download" "Windows Update cache"
 
-Log-Section "CACHÉS DE NAVEGADORES"
+Log-Section "ARCHIVOS RECIENTES Y REPORTES"
+$script:BytesFreed += Remove-Folder "$env:APPDATA\Microsoft\Windows\Recent"          "Archivos Recientes (MRU)"
+$script:BytesFreed += Remove-Folder "$env:LOCALAPPDATA\Microsoft\Windows\WER"        "Windows Error Reports"
+$script:BytesFreed += Remove-Folder "C:\Windows\Logs\CBS"                             "Windows CBS Logs"
+$script:BytesFreed += Remove-Folder "$env:LOCALAPPDATA\Microsoft\Windows\INetCache"  "Internet Cache"
+
+Log-Section "DELIVERY OPTIMIZATION"
+$doCachePath = "$env:SystemRoot\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache"
+$script:BytesFreed += Remove-Folder $doCachePath "Delivery Optimization Cache"
+
+Log-Section "EVENT LOGS"
+foreach ($logName in @("Application", "System", "Setup")) {
+    try {
+        & wevtutil cl $logName 2>&1 | Out-Null
+        Log-Step "Event Log [$logName]: limpiado" "[OK]" "Green"
+    } catch { Log-Step "Event Log [$logName]: no se pudo limpiar" "[--]" "DarkGray" }
+}
+
+Log-Section "CACHES DE NAVEGADORES"
 @{ "Chrome" = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default";
    "Edge"   = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default" }.GetEnumerator() | ForEach-Object {
     $browser = $_.Key; $base = $_.Value

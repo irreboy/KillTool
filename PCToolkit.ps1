@@ -25,6 +25,10 @@ $script:_MonStream   = ""
 $script:_MonData     = @{}
 $script:_Tray        = $null
 $script:_TrayExit    = $false
+$script:_CpuHistory  = [System.Collections.Generic.List[int]]::new()
+$script:_GpuHistory  = [System.Collections.Generic.List[int]]::new()
+$script:_HealthSecCrit = 0
+$script:_HealthSecWarn = 0
 
 $script:AsciiSkull = @(
     "⠀⠀⠀⠲⣦⣤⣀⣀⠀⠀⠀⣀⣀⣠⣤⣀⣀⠀⢀⣀⣠⣤⣶⣶⠟⠀⠀⠀",
@@ -158,6 +162,12 @@ $XAML = @'
             <TextBlock Text="IRREBOY" Foreground="#9922cc" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"/>
           </StackPanel>
           <TextBlock x:Name="SysInfo" Text="cargando..." Foreground="#330044" FontSize="10" Margin="0,3,0,0"/>
+          <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+            <TextBlock x:Name="HealthDot"    Text="● " Foreground="#44bb66" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
+            <TextBlock x:Name="HealthScore"  Text="---" Foreground="#44bb66" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
+            <TextBlock Text="/100" Foreground="#330044" FontSize="8" VerticalAlignment="Bottom" Margin="2,0,0,2"/>
+            <TextBlock x:Name="HealthStatus" Text="  calculando..." Foreground="#330044" FontSize="9" VerticalAlignment="Bottom" Margin="4,0,0,2"/>
+          </StackPanel>
         </StackPanel>
         <StackPanel Grid.Column="1" HorizontalAlignment="Right">
           <TextBlock x:Name="ClockText" Text="" Foreground="#660099" FontSize="20" FontWeight="Bold" HorizontalAlignment="Right"/>
@@ -188,6 +198,7 @@ $XAML = @'
             <Button x:Name="TabSecurity" Content="[S]  SEGURIDAD"  Style="{StaticResource SideTabActive}"/>
             <Button x:Name="TabClean"    Content="[C]  LIMPIEZA"   Style="{StaticResource SideTabBtn}"/>
             <Button x:Name="TabGaming"   Content="[G]  GAMING"     Style="{StaticResource SideTabBtn}"/>
+            <Button x:Name="TabTweaks"   Content="[T]  TWEAKS"     Style="{StaticResource SideTabBtn}"/>
 
             <Rectangle Height="1" Fill="#1a001a" Margin="0,12,0,10"/>
 
@@ -239,6 +250,21 @@ $XAML = @'
               <Button x:Name="BtnClearShaders" Content="[S] LIMPIAR SHADERS"   Style="{StaticResource BtnGhost}"/>
             </StackPanel>
 
+            <!-- TWEAKS PANEL -->
+            <StackPanel x:Name="PanelTweaks" Visibility="Collapsed">
+              <TextBlock Text="// PRIVACIDAD" Foreground="#440055" FontSize="9" FontWeight="Bold" Margin="4,0,0,5"/>
+              <Button x:Name="BtnTweakTelemetry"  Content="[T] TELEMETRIA"        Style="{StaticResource BtnGhost}"/>
+              <Button x:Name="BtnTweakCortana"    Content="[C] CORTANA"           Style="{StaticResource BtnGhost}"/>
+              <Button x:Name="BtnTweakOneDrive"   Content="[O] ONEDRIVE STARTUP"  Style="{StaticResource BtnGhost}"/>
+              <Button x:Name="BtnTweakNotifs"     Content="[N] NOTIFICACIONES"    Style="{StaticResource BtnGhost}"/>
+              <Rectangle Height="1" Fill="#1a001a" Margin="0,8,0,6"/>
+              <TextBlock Text="// RENDIMIENTO" Foreground="#440055" FontSize="9" FontWeight="Bold" Margin="4,0,0,5"/>
+              <Button x:Name="BtnTweakHibernate"  Content="[H] HIBERNATE OFF"     Style="{StaticResource BtnOrange}"/>
+              <Button x:Name="BtnTweakPowerThrot" Content="[P] POWER THROTTLING"  Style="{StaticResource BtnOrange}"/>
+              <Button x:Name="BtnTweakQoS"        Content="[Q] QoS BANDWIDTH"     Style="{StaticResource BtnOrange}"/>
+              <Button x:Name="BtnTweakWin32Pri"   Content="[W] WIN32 PRIORITY"    Style="{StaticResource BtnOrange}"/>
+            </StackPanel>
+
           </StackPanel>
         </ScrollViewer>
       </Border>
@@ -265,7 +291,8 @@ $XAML = @'
               <TextBlock x:Name="MonCpuBar" Text="░░░░░░░░░░░░░░░░░░░░" Foreground="#33cc66" FontSize="10" Grid.Column="1" VerticalAlignment="Center"/>
               <TextBlock x:Name="MonCpuPct" Text="--"   Foreground="#33cc66" FontSize="9" FontWeight="Bold" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"/>
             </Grid>
-            <TextBlock x:Name="MonCpuInfo" Text="--" Foreground="#251035" FontSize="8" Margin="34,1,0,7" TextWrapping="Wrap"/>
+            <TextBlock x:Name="MonCpuInfo"  Text="--" Foreground="#251035" FontSize="8" Margin="34,1,0,1" TextWrapping="Wrap"/>
+            <TextBlock x:Name="MonCpuSpark" Text=""   Foreground="#1a0028" FontSize="9" Margin="34,0,0,7"/>
 
             <!-- RAM -->
             <Grid Margin="0,0,0,0">
@@ -287,7 +314,8 @@ $XAML = @'
               <TextBlock x:Name="MonGpuBar" Text="░░░░░░░░░░░░░░░░░░░░" Foreground="#33cc66" FontSize="10" Grid.Column="1" VerticalAlignment="Center"/>
               <TextBlock x:Name="MonGpuPct" Text="--"   Foreground="#33cc66" FontSize="9" FontWeight="Bold" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"/>
             </Grid>
-            <TextBlock x:Name="MonGpuInfo" Text="--" Foreground="#251035" FontSize="8" Margin="34,1,0,7" TextWrapping="Wrap"/>
+            <TextBlock x:Name="MonGpuInfo"  Text="--" Foreground="#251035" FontSize="8" Margin="34,1,0,1" TextWrapping="Wrap"/>
+            <TextBlock x:Name="MonGpuSpark" Text=""   Foreground="#1a0028" FontSize="9" Margin="34,0,0,7"/>
 
             <!-- TEMP -->
             <Grid Margin="0,0,0,0">
@@ -409,10 +437,25 @@ $MonProc2        = $Window.FindName("MonProc2")
 $MonProc3        = $Window.FindName("MonProc3")
 $MonUptime       = $Window.FindName("MonUptime")
 $MonLastUpdate   = $Window.FindName("MonLastUpdate")
-$BtnVFX          = $Window.FindName("BtnVFX")
-$BtnFlushDNS     = $Window.FindName("BtnFlushDNS")
-$BtnResetNet     = $Window.FindName("BtnResetNet")
-$BtnClearShaders = $Window.FindName("BtnClearShaders")
+$BtnVFX              = $Window.FindName("BtnVFX")
+$BtnFlushDNS         = $Window.FindName("BtnFlushDNS")
+$BtnResetNet         = $Window.FindName("BtnResetNet")
+$BtnClearShaders     = $Window.FindName("BtnClearShaders")
+$TabTweaks           = $Window.FindName("TabTweaks")
+$PanelTweaks         = $Window.FindName("PanelTweaks")
+$BtnTweakTelemetry   = $Window.FindName("BtnTweakTelemetry")
+$BtnTweakCortana     = $Window.FindName("BtnTweakCortana")
+$BtnTweakOneDrive    = $Window.FindName("BtnTweakOneDrive")
+$BtnTweakNotifs      = $Window.FindName("BtnTweakNotifs")
+$BtnTweakHibernate   = $Window.FindName("BtnTweakHibernate")
+$BtnTweakPowerThrot  = $Window.FindName("BtnTweakPowerThrot")
+$BtnTweakQoS         = $Window.FindName("BtnTweakQoS")
+$BtnTweakWin32Pri    = $Window.FindName("BtnTweakWin32Pri")
+$HealthScore         = $Window.FindName("HealthScore")
+$HealthDot           = $Window.FindName("HealthDot")
+$HealthStatus        = $Window.FindName("HealthStatus")
+$MonCpuSpark         = $Window.FindName("MonCpuSpark")
+$MonGpuSpark         = $Window.FindName("MonGpuSpark")
 
 # ---- Color helpers ------------------------------------------------------
 $script:Brushes = @{}
@@ -997,6 +1040,50 @@ function Update-MonitorDisplay {
         $MonUptime.Text = "uptime: $($d['uptime'])"
     }
 
+    # CPU SPARKLINE
+    if ($null -ne $d["cpu"]) {
+        $script:_CpuHistory.Add([int]$d["cpu"])
+        while ($script:_CpuHistory.Count -gt 22) { $script:_CpuHistory.RemoveAt(0) }
+        $MonCpuSpark.Text = ($script:_CpuHistory | ForEach-Object {
+            "▁▂▃▄▅▆▇█"[[math]::Min(7,[math]::Floor($_ / 100.0 * 8))]
+        }) -join ""
+        $MonCpuSpark.Foreground = Get-Brush "#220033"
+    }
+    # GPU SPARKLINE
+    if ($null -ne $d["gpu"] -and [int]$d["gpu"] -ge 0) {
+        $script:_GpuHistory.Add([int]$d["gpu"])
+        while ($script:_GpuHistory.Count -gt 22) { $script:_GpuHistory.RemoveAt(0) }
+        $MonGpuSpark.Text = ($script:_GpuHistory | ForEach-Object {
+            "▁▂▃▄▅▆▇█"[[math]::Min(7,[math]::Floor($_ / 100.0 * 8))]
+        }) -join ""
+        $MonGpuSpark.Foreground = Get-Brush "#220033"
+    }
+    # HEALTH SCORE
+    $hScore = 100
+    if ($null -ne $d["ram"]) {
+        $rp = [int]$d["ram"]
+        if ($rp -gt 85) { $hScore -= 20 } elseif ($rp -gt 70) { $hScore -= 10 } elseif ($rp -gt 50) { $hScore -= 5 }
+    }
+    if ($null -ne $d["temp"] -and [int]$d["temp"] -ge 0) {
+        $tp = [int]$d["temp"]
+        if ($tp -gt 85) { $hScore -= 25 } elseif ($tp -gt 70) { $hScore -= 10 } elseif ($tp -gt 60) { $hScore -= 5 }
+        # TEMP ALERT
+        if ($tp -gt 85 -and $script:_Tray) {
+            $script:_Tray.ShowBalloonTip(5000, "PC Toolkit  ALERTA", "Temperatura critica: ${tp}C - revisa ventilacion", [System.Windows.Forms.ToolTipIcon]::Warning)
+        }
+    }
+    $hScore -= [math]::Min(30, $script:_HealthSecCrit * 15)
+    $hScore -= [math]::Min(15, $script:_HealthSecWarn * 3)
+    $hScore = [math]::Max(0, [math]::Min(100, $hScore))
+    $hClr = if ($hScore -ge 80) { "#44bb66" } elseif ($hScore -ge 60) { "#ddaa22" } else { "#cc3355" }
+    $hLabel = if ($hScore -ge 80) { "sistema saludable" } elseif ($hScore -ge 60) { "atencion requerida" } else { "estado critico" }
+    if ($HealthScore) {
+        $HealthScore.Text       = "$hScore"
+        $HealthScore.Foreground = Get-Brush $hClr
+        $HealthDot.Foreground   = Get-Brush $hClr
+        $HealthStatus.Text      = "  $hLabel"
+        $HealthStatus.Foreground = Get-Brush $hClr
+    }
     $MonLastUpdate.Text = "update: $(Get-Date -Format 'HH:mm:ss')"
 }
 
@@ -1027,6 +1114,15 @@ function Setup-Tray {
         $Window.Show(); $Window.WindowState = "Normal"; Switch-Tab "Clean"
         $BtnRunClean.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
     })
+    $mGaming = $ctx.Items.Add("[G]  Gaming Boost  ON/OFF")
+    $mGaming.Add_Click({
+        $Window.Show(); $Window.WindowState = "Normal"; Switch-Tab "Gaming"
+        if (Test-Path "$ScriptsDir\GameBoost_Backup.json") {
+            $BtnGameRestore.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+        } else {
+            $BtnGameApply.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+        }
+    })
     $ctx.Items.Add("-") | Out-Null
     $mExit = $ctx.Items.Add("[X]  Salir")
     $mExit.Add_Click({
@@ -1049,13 +1145,15 @@ function Switch-Tab { param([string]$Tab)
     $script:ActiveTab = $Tab
     $off = $Window.Resources["SideTabBtn"]
     $on  = $Window.Resources["SideTabActive"]
-    $TabSecurity.Style = $off; $TabClean.Style = $off; $TabGaming.Style = $off
+    $TabSecurity.Style = $off; $TabClean.Style = $off; $TabGaming.Style = $off; $TabTweaks.Style = $off
     $PanelSecurity.Visibility = "Collapsed"
     $PanelClean.Visibility    = "Collapsed"
     $PanelGaming.Visibility   = "Collapsed"
+    $PanelTweaks.Visibility   = "Collapsed"
     switch ($Tab) {
         "Security" { $TabSecurity.Style = $on; $PanelSecurity.Visibility = "Visible" }
         "Clean"    { $TabClean.Style    = $on; $PanelClean.Visibility    = "Visible" }
+        "Tweaks"   { $TabTweaks.Style   = $on; $PanelTweaks.Visibility   = "Visible" }
         "Gaming"   {
             $TabGaming.Style = $on; $PanelGaming.Visibility = "Visible"
             if (-not $script:IsAdmin) {
@@ -1077,6 +1175,7 @@ function Switch-Tab { param([string]$Tab)
 $TabSecurity.Add_Click({ Switch-Tab "Security" })
 $TabClean.Add_Click({    Switch-Tab "Clean" })
 $TabGaming.Add_Click({   Switch-Tab "Gaming" })
+$TabTweaks.Add_Click({   Switch-Tab "Tweaks" })
 
 # ---- ELEVATE ------------------------------------------------------------
 $BtnElevate.Add_Click({
@@ -1091,6 +1190,108 @@ $BtnElevate.Add_Click({
     } catch {
         Add-LogLine "  [!!]  UAC cancelado o no disponible: $_" "#ddaa22"
     }
+})
+
+# ---- TWEAKS -------------------------------------------------------------
+$BtnTweakTelemetry.Add_Click({
+    Add-LogSection "TELEMETRIA"
+    try {
+        $p = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
+        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
+        Set-ItemProperty $p -Name "AllowTelemetry" -Value 0 -Type DWord
+        Stop-Service "DiagTrack"       -Force -ErrorAction SilentlyContinue
+        Set-Service  "DiagTrack"       -StartupType Disabled -ErrorAction SilentlyContinue
+        Stop-Service "dmwappushservice" -Force -ErrorAction SilentlyContinue
+        Set-Service  "dmwappushservice" -StartupType Disabled -ErrorAction SilentlyContinue
+        Add-LogLine "  [OK]  Telemetria desactivada (AllowTelemetry=0)" "#44bb66"
+        Add-LogLine "  [OK]  Servicios DiagTrack y dmwappushservice detenidos" "#44bb66"
+        Add-LogLine "  [i]   Requiere admin para modificar servicios" "#9944cc"
+        $StatusBar.Text = "telemetria: desactivada."
+    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
+})
+
+$BtnTweakCortana.Add_Click({
+    Add-LogSection "CORTANA"
+    try {
+        $p = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"
+        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
+        Set-ItemProperty $p -Name "AllowCortana" -Value 0 -Type DWord
+        Add-LogLine "  [OK]  Cortana desactivada via GPO" "#44bb66"
+        Add-LogLine "  [i]   Efecto visible tras cerrar sesion" "#9944cc"
+        $StatusBar.Text = "Cortana: desactivada."
+    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
+})
+
+$BtnTweakOneDrive.Add_Click({
+    Add-LogSection "ONEDRIVE STARTUP"
+    try {
+        Remove-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "OneDrive" -ErrorAction SilentlyContinue
+        Add-LogLine "  [OK]  OneDrive eliminado del autoarranque" "#44bb66"
+        Add-LogLine "  [i]   OneDrive no se desinstala, solo deja de iniciar con Windows" "#9944cc"
+        $StatusBar.Text = "OneDrive: removido de startup."
+    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
+})
+
+$BtnTweakNotifs.Add_Click({
+    Add-LogSection "NOTIFICACIONES"
+    try {
+        $p = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\PushNotifications"
+        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
+        Set-ItemProperty $p -Name "ToastEnabled" -Value 0 -Type DWord
+        Add-LogLine "  [OK]  Notificaciones Toast desactivadas" "#44bb66"
+        Add-LogLine "  [i]   Cierra sesion y vuelve a entrar para aplicar" "#9944cc"
+        $StatusBar.Text = "notificaciones: desactivadas."
+    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
+})
+
+$BtnTweakHibernate.Add_Click({
+    $r = [System.Windows.MessageBox]::Show(
+        "Desactivar hibernacion?`n`nLibera hiberfil.sys (puede ser varios GB).`nRequiere reinicio para eliminar el archivo.",
+        "Hibernate OFF","YesNo","Question")
+    if ($r -ne "Yes") { return }
+    Add-LogSection "HIBERNATE"
+    try {
+        & powercfg /h off 2>&1 | Out-Null
+        Add-LogLine "  [OK]  Hibernacion desactivada" "#44bb66"
+        Add-LogLine "  [i]   hiberfil.sys sera eliminado al reiniciar" "#9944cc"
+        $StatusBar.Text = "hibernate: desactivado."
+    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
+})
+
+$BtnTweakPowerThrot.Add_Click({
+    Add-LogSection "POWER THROTTLING"
+    try {
+        $p = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling"
+        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
+        Set-ItemProperty $p -Name "PowerThrottlingOff" -Value 1 -Type DWord
+        Add-LogLine "  [OK]  Power Throttling desactivado" "#44bb66"
+        Add-LogLine "  [i]   CPU no limitara velocidad de apps en segundo plano" "#9944cc"
+        $StatusBar.Text = "power throttling: desactivado."
+    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
+})
+
+$BtnTweakQoS.Add_Click({
+    Add-LogSection "QoS BANDWIDTH"
+    try {
+        $p = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched"
+        if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
+        Set-ItemProperty $p -Name "NonBestEffortLimit" -Value 0 -Type DWord
+        Add-LogLine "  [OK]  Limite QoS desactivado (100% del ancho de banda disponible)" "#44bb66"
+        Add-LogLine "  [i]   Windows reserva 20% por defecto, ahora es 0%" "#9944cc"
+        $StatusBar.Text = "QoS bandwidth: 100% liberado."
+    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
+})
+
+$BtnTweakWin32Pri.Add_Click({
+    Add-LogSection "WIN32 PRIORITY"
+    try {
+        Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" `
+            -Name "Win32PrioritySeparation" -Value 0x26 -Type DWord
+        Add-LogLine "  [OK]  Win32PrioritySeparation = 0x26 (modo gaming)" "#44bb66"
+        Add-LogLine "  [i]   CPU prioriza la app en foco al maximo" "#9944cc"
+        Add-LogLine "  [i]   Reinicia para aplicar completamente" "#9944cc"
+        $StatusBar.Text = "win32 priority: modo gaming."
+    } catch { Add-LogLine "  [!!]  Error: $_" "#ddaa22" }
 })
 
 # ---- SECURITY -----------------------------------------------------------
@@ -1111,6 +1312,8 @@ $BtnRunSecurity.Add_Click({
 
             if ($result -and $result.PSObject.Properties['Alerts']) {
                 $script:LastAlerts = $result.Alerts; $script:LastLogFile = $result.LogFile
+                $script:_HealthSecCrit = ($result.Alerts | Where-Object { $_.Level -eq "CRIT" }).Count
+                $script:_HealthSecWarn = ($result.Alerts | Where-Object { $_.Level -eq "WARN" }).Count
                 $n = $result.Alerts.Count
                 if ($n -gt 0) {
                     $BtnFixAll.IsEnabled = $true
